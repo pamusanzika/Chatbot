@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase-server'
 import { getProducts, createProduct } from '@/lib/db/products'
+import { embedImageFromUrl } from '@/lib/imageEmbeddings'
 
 function checkApiKey(req: NextRequest): boolean {
   const expected = process.env.FLOWBOT_API_KEY
@@ -78,6 +79,19 @@ export async function POST(req: NextRequest) {
       is_active: typeof is_active === 'boolean' ? is_active : true,
       low_stock_threshold: typeof low_stock_threshold === 'number' ? low_stock_threshold : 5,
     })
+    if (created.id && Array.isArray(image_urls) && image_urls.length > 0) {
+      try {
+        const embedding = await embedImageFromUrl(String(image_urls[0]))
+        const supabaseForEmbed = await createServiceClient()
+        await supabaseForEmbed
+          .from('products')
+          .update({ image_embedding: `[${embedding.join(',')}]` })
+          .eq('id', created.id)
+      } catch (embErr) {
+        console.error('Failed to generate image embedding for new product:', embErr)
+      }
+    }
+
     return NextResponse.json({ product: created }, { status: 201 })
   } catch (err) {
     return NextResponse.json({ error: err instanceof Error ? err.message : 'Failed to create product' }, { status: 500 })

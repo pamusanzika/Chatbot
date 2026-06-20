@@ -33,8 +33,9 @@ async function callVoyage(content: Array<Record<string, unknown>>): Promise<numb
 }
 
 export async function embedImage(input: { base64: string; mimeType: string }): Promise<number[]> {
+  const dataUri = `data:${input.mimeType};base64,${input.base64}`
   return callVoyage([
-    { type: 'image_base64', image_base64: input.base64, media_type: input.mimeType },
+    { type: 'image_base64', image_base64: dataUri },
   ])
 }
 

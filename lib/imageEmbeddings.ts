@@ -1,5 +1,5 @@
-const EMBED_API_KEY = process.env.EMBED_API_KEY ?? ''
-const EMBED_MODEL = process.env.EMBED_MODEL ?? 'voyage-multimodal-3'
+function getApiKey() { return process.env.EMBED_API_KEY ?? '' }
+function getModel() { return process.env.EMBED_MODEL ?? 'voyage-multimodal-3' }
 
 function l2Normalize(vec: number[]): number[] {
   const norm = Math.sqrt(vec.reduce((sum, v) => sum + v * v, 0))
@@ -12,11 +12,12 @@ async function callVoyage(content: Array<Record<string, unknown>>): Promise<numb
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${EMBED_API_KEY}`,
+      Authorization: `Bearer ${getApiKey()}`,
     },
     body: JSON.stringify({
-      model: EMBED_MODEL,
+      model: getModel(),
       inputs: [{ content }],
+      input_type: 'document',
     }),
   })
 
@@ -33,12 +34,12 @@ async function callVoyage(content: Array<Record<string, unknown>>): Promise<numb
 
 export async function embedImage(input: { base64: string; mimeType: string }): Promise<number[]> {
   return callVoyage([
-    { type: 'image', image: input.base64, media_type: input.mimeType },
+    { type: 'image_base64', image_base64: input.base64, media_type: input.mimeType },
   ])
 }
 
 export async function embedImageFromUrl(url: string): Promise<number[]> {
   return callVoyage([
-    { type: 'image', image_url: url },
+    { type: 'image_url', image_url: url },
   ])
 }

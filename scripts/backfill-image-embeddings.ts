@@ -7,6 +7,9 @@
  * EMBED_API_KEY, EMBED_MODEL (optional).
  */
 
+import { config } from 'dotenv'
+config({ path: '.env.local' })
+
 import { createClient } from '@supabase/supabase-js'
 import { embedImageFromUrl } from '../lib/imageEmbeddings'
 

@@ -16,10 +16,26 @@ import {
 } from '@/lib/db/products'
 import { createCategory, updateCategory, deleteCategory } from '@/lib/db/categories'
 import { createServiceClient } from '@/lib/supabase-server'
+import { embedImageFromUrl } from '@/lib/imageEmbeddings'
+
+async function updateImageEmbedding(productId: string, imageUrls?: string[]) {
+  if (!imageUrls || imageUrls.length === 0) return
+  try {
+    const embedding = await embedImageFromUrl(imageUrls[0])
+    const supabase = await createServiceClient()
+    await supabase
+      .from('products')
+      .update({ image_embedding: `[${embedding.join(',')}]` })
+      .eq('id', productId)
+  } catch (err) {
+    console.error('Failed to update image embedding:', err)
+  }
+}
 
 export async function createProductAction(product: ProductInput, variants: VariantInput[]) {
   const { tenantId } = await getTenant()
   const created = await createProduct(tenantId, product, variants)
+  await updateImageEmbedding(created.id, product.image_urls)
   revalidatePath('/products')
   return created
 }
@@ -27,6 +43,9 @@ export async function createProductAction(product: ProductInput, variants: Varia
 export async function updateProductAction(productId: string, product: Partial<ProductInput>) {
   const { tenantId } = await getTenant()
   await updateProduct(tenantId, productId, product)
+  if (product.image_urls) {
+    await updateImageEmbedding(productId, product.image_urls)
+  }
   revalidatePath('/products')
 }
 

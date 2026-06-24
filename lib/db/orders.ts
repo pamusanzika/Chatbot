@@ -86,14 +86,17 @@ export async function updateOrderStatus(
   tenantId: string,
   orderId: string,
   status: OrderStatus
-): Promise<void> {
+): Promise<Order> {
   const supabase = await createServiceClient()
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from('orders')
     .update({ status })
     .eq('tenant_id', tenantId)
     .eq('id', orderId)
+    .select()
+    .single()
   if (error) throw error
+  return data as Order
 }
 
 export async function getOrderStats(tenantId: string) {

@@ -10,24 +10,25 @@
   },
   "dependencies": {
     "@clerk/nextjs": "^6.12.12",
-    "@supabase/supabase-js": "^2.49.2",
     "@supabase/ssr": "^0.6.1",
+    "@supabase/supabase-js": "^2.49.2",
+    "clsx": "^2.1.1",
+    "dotenv": "^17.4.2",
     "lucide-react": "^0.475.0",
     "next": "14.2.29",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "recharts": "^2.15.1",
-    "clsx": "^2.1.1"
+    "recharts": "^2.15.1"
   },
   "devDependencies": {
     "@types/node": "^20",
     "@types/react": "^18",
     "@types/react-dom": "^18",
+    "autoprefixer": "^10.0.1",
     "eslint": "^8",
     "eslint-config-next": "14.2.29",
     "postcss": "^8",
     "tailwindcss": "^3.4.1",
-    "autoprefixer": "^10.0.1",
     "typescript": "^5"
   }
 }

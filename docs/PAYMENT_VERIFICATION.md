@@ -147,6 +147,192 @@ Returns single order + signed proof URL (5-min expiry) + audit logs.
 
 ---
 
+## Bot-Side Endpoints (n8n → FlowBot API)
+
+These endpoints power the WhatsApp chatbot side — n8n calls them to detect awaiting-payment orders and upload proofs, so the slip never hits image search and goes straight to the dashboard.
+
+### The Problem They Solve
+
+Before these endpoints:
+- Customer sends a payment slip image → n8n has no way to know it's a slip → routes to **image search** → slip "pollutes" the order with product matches
+- Even if n8n knew, there was no endpoint to upload the proof → slip is lost, admin never sees it
+
+After:
+- n8n checks `active-awaiting-payment` first → if the customer has a bank transfer order waiting, n8n skips image search entirely → routes to `payment-proof` → slip is uploaded, order flips to `pending_verification`, dashboard receives the proof instantly
+
+### n8n Image Routing Flow
+
+```
+Customer sends image via WhatsApp
+              │
+              ▼
+   GET /api/v1/orders/active-awaiting-payment
+         ?tenant_id=...&phone=...
+              │
+         ┌────┴────┐
+         │         │
+     awaiting    404
+      found       │
+         │        ▼
+         ▼   POST /api/v1/products/image-search
+   POST /api/v1/orders/payment-proof
+         │        │
+         ▼        ▼
+   Order flips   Product
+   to pending_   matches
+   verification  returned
+         │
+         ▼
+   Dashboard shows proof
+   in Payments queue
+```
+
+### `GET /api/v1/orders/active-awaiting-payment`
+
+**Purpose:** n8n calls this when a customer sends an image. If they have an `awaiting_payment` order, n8n routes to the proof upload branch instead of image search.
+
+**Auth:** `x-api-key` header (FLOWBOT_API_KEY)
+
+**Query params:**
+- `tenant_id` (required)
+- `phone` (required — customer's WhatsApp number)
+
+**Response (found):**
+```json
+{
+  "awaiting": true,
+  "order": {
+    "id": "uuid",
+    "order_ref": "ORD-2026-0042",
+    "status": "awaiting_payment",
+    "total": 4500,
+    "currency": "LKR",
+    "customer_name": "John Doe",
+    "payment_method": "bank_transfer",
+    "created_at": "2026-06-25T10:00:00Z"
+  }
+}
+```
+
+**Response (no awaiting order):**
+```json
+{ "awaiting": false }    // 404
+```
+
+**File:** `app/api/v1/orders/active-awaiting-payment/route.ts`
+
+---
+
+### `POST /api/v1/orders/payment-proof`
+
+**Purpose:** Receives the payment slip image from n8n, uploads it to Supabase Storage, creates a `payment_proofs` row, flips the order to `pending_verification`, and writes an audit log entry.
+
+**Auth:** `x-api-key` header (FLOWBOT_API_KEY)
+
+**Body:**
+```json
+{
+  "tenant_id": "uuid",
+  "order_id": "uuid",
+  "image_base64": "base64-encoded-image-no-data-prefix",
+  "mime_type": "image/jpeg",
+  "file_name": "slip.jpg",
+  "customer_reference": "ORD-2026-0042"
+}
+```
+
+| Field                | Required | Notes |
+| -------------------- | -------- | ----- |
+| `tenant_id`          | Yes      |       |
+| `order_id`           | Yes      | UUID from the `active-awaiting-payment` response |
+| `image_base64`       | Yes      | Raw base64, no `data:` prefix |
+| `mime_type`          | No       | Default: `image/jpeg` |
+| `file_name`          | No       | Default: `payment-proof.jpg` |
+| `customer_reference` | No       | What the customer typed as their reference |
+
+**Response (success):**
+```json
+{
+  "success": true,
+  "order_ref": "ORD-2026-0042",
+  "status": "pending_verification"
+}
+```
+
+**Error responses:**
+- `404` — order not found
+- `409` — order not in `awaiting_payment` status, or proof already uploaded
+- `500` — storage upload or DB error
+
+**What it does internally:**
+1. Validates order exists and is `awaiting_payment`
+2. Checks no proof already exists (UNIQUE constraint)
+3. Uploads image to `payment-proofs/{tenant_id}/{order_id}/{file_name}`
+4. Creates `payment_proofs` row
+5. Flips `orders.status` to `pending_verification` (with status guard against race)
+6. Writes `audit_logs` entry with action `proof_uploaded`
+
+**File:** `app/api/v1/orders/payment-proof/route.ts`
+
+---
+
+### Order Creation Change
+
+**`POST /api/v1/orders`** — updated so that when `payment_method` is `bank_transfer`, the order starts as `awaiting_payment` instead of `pending`. The upsert-on-draft logic also matches `awaiting_payment` drafts.
+
+**File:** `app/api/v1/orders/route.ts`
+
+---
+
+### n8n Workflow Setup (Image Branch)
+
+Add this to your existing n8n WhatsApp workflow, **before** the image search node:
+
+#### Node 1: HTTP Request — Check Awaiting Payment
+
+```
+Method: GET
+URL: {{$env.FLOWBOT_API_URL}}/api/v1/orders/active-awaiting-payment
+       ?tenant_id={{ $json.tenant_id }}&phone={{ $json.phone }}
+Headers:
+  x-api-key: {{$env.FLOWBOT_API_KEY}}
+```
+
+#### Node 2: IF Node — Route Decision
+
+- **Condition:** `{{ $json.awaiting }}` equals `true`
+- **True branch →** Upload proof
+- **False branch →** Existing image search flow
+
+#### Node 3: HTTP Request — Upload Proof (true branch)
+
+```
+Method: POST
+URL: {{$env.FLOWBOT_API_URL}}/api/v1/orders/payment-proof
+Headers:
+  x-api-key: {{$env.FLOWBOT_API_KEY}}
+  Content-Type: application/json
+Body:
+{
+  "tenant_id": "{{ $json.tenant_id }}",
+  "order_id": "{{ $node['Check Awaiting'].json.order.id }}",
+  "image_base64": "{{ $json.image_base64 }}",
+  "mime_type": "{{ $json.mime_type }}",
+  "customer_reference": "{{ $json.customer_text }}"
+}
+```
+
+#### Node 4: WhatsApp Reply — Proof Received
+
+```
+To: {{ $json.phone }}
+Text:
+  ✅ We received your payment slip for order {{ $json.order_ref }}.
+  Our team will verify it shortly. You'll be notified once confirmed.
+```
+
+---
+
 ## n8n Integration
 
 ### How it connects

@@ -5,7 +5,7 @@ import { lookupZoneByCity } from '@/lib/db/delivery-zones'
 import { notifyOrderStatusChange } from '@/lib/n8n-webhook'
 import type { OrderItem, OrderStatus } from '@/types'
 
-const VALID_STATUSES: OrderStatus[] = ['pending', 'confirmed', 'preparing', 'shipped', 'delivered', 'cancelled']
+const VALID_STATUSES: OrderStatus[] = ['pending', 'awaiting_payment', 'pending_verification', 'confirmed', 'preparing', 'shipped', 'delivered', 'cancelled']
 
 function checkApiKey(req: NextRequest): boolean {
   const expected = process.env.FLOWBOT_API_KEY
@@ -139,22 +139,25 @@ export async function POST(req: NextRequest) {
       updated_at: new Date().toISOString(),
     }
 
-    // Upsert-on-draft: find the customer's open pending order
+    // Bank transfer orders start as awaiting_payment; others start as pending
+    const initialStatus = payment_method.trim().toLowerCase() === 'bank_transfer' ? 'awaiting_payment' : 'pending'
+
+    // Upsert-on-draft: find the customer's open draft order (pending or awaiting_payment)
     if (phoneStr) {
       const { data: open } = await supabase
         .from('orders')
         .select('id')
         .eq('tenant_id', tenant_id)
         .eq('phone', phoneStr)
-        .eq('status', 'pending')
+        .in('status', ['pending', 'awaiting_payment'])
         .maybeSingle()
 
       if (open) {
         const { data, error } = await supabase
           .from('orders')
-          .update(baseRow)
+          .update({ ...baseRow, status: initialStatus })
           .eq('id', open.id)
-          .eq('status', 'pending')
+          .in('status', ['pending', 'awaiting_payment'])
           .select('order_ref')
           .maybeSingle()
         if (error) return NextResponse.json({ error: 'Failed to update order' }, { status: 500 })
@@ -166,7 +169,7 @@ export async function POST(req: NextRequest) {
     // No draft — insert. Catch the partial-unique race.
     const { data: ins, error: insErr } = await supabase
       .from('orders')
-      .insert({ ...baseRow, status: 'pending' as const, created_at: new Date().toISOString() })
+      .insert({ ...baseRow, status: initialStatus, created_at: new Date().toISOString() })
       .select('order_ref')
       .single()
 

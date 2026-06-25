@@ -3,6 +3,7 @@ import { createServiceClient } from '@/lib/supabase-server'
 import { getOrders, getOrder, updateOrderStatus } from '@/lib/db/orders'
 import { lookupZoneByCity } from '@/lib/db/delivery-zones'
 import { notifyOrderStatusChange } from '@/lib/n8n-webhook'
+import { isBankTransfer, normalizePaymentMethod } from '@/lib/payments'
 import type { OrderItem, OrderStatus } from '@/types'
 
 const VALID_STATUSES: OrderStatus[] = ['pending', 'awaiting_payment', 'pending_verification', 'confirmed', 'preparing', 'shipped', 'delivered', 'cancelled']
@@ -132,15 +133,14 @@ export async function POST(req: NextRequest) {
       delivery_zone: zone?.district ?? null,
       estimated_days: zone?.estimated_days ?? null,
       items: verifiedItems,
-      payment_method: payment_method.trim(),
+      payment_method: normalizePaymentMethod(payment_method as string),
       subtotal,
       delivery_fee,
       total,
       updated_at: new Date().toISOString(),
     }
 
-    // Bank transfer orders start as awaiting_payment; others start as pending
-    const initialStatus = payment_method.trim().toLowerCase() === 'bank_transfer' ? 'awaiting_payment' : 'pending'
+    const initialStatus = isBankTransfer(payment_method as string) ? 'awaiting_payment' : 'pending'
 
     // Upsert-on-draft: find the customer's open draft order (pending or awaiting_payment)
     if (phoneStr) {
@@ -179,14 +179,14 @@ export async function POST(req: NextRequest) {
         .select('id')
         .eq('tenant_id', tenant_id)
         .eq('phone', phoneStr)
-        .eq('status', 'pending')
+        .in('status', ['pending', 'awaiting_payment'])
         .maybeSingle()
       if (again) {
         const { data } = await supabase
           .from('orders')
-          .update(baseRow)
+          .update({ ...baseRow, status: initialStatus })
           .eq('id', again.id)
-          .eq('status', 'pending')
+          .in('status', ['pending', 'awaiting_payment'])
           .select('order_ref')
           .maybeSingle()
         if (data) return NextResponse.json({ order_id: data.order_ref, mode: 'updated', subtotal, delivery_fee, total })
@@ -263,6 +263,16 @@ export async function PATCH(req: NextRequest) {
     const existing = await getOrder(tenant_id, order_id)
     if (!existing) {
       return NextResponse.json({ error: 'Order not found' }, { status: 404 })
+    }
+
+    // Guard: confirmed/cancelled can only come from the dashboard payment-decision route
+    if (status === 'confirmed' || status === 'cancelled') {
+      if (existing.status !== 'pending_verification') {
+        return NextResponse.json(
+          { error: `Cannot transition from ${existing.status} to ${status}` },
+          { status: 422 }
+        )
+      }
     }
 
     const previousStatus = existing.status

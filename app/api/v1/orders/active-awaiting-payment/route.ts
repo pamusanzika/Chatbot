@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase-server'
+import { normalizePhone } from '@/lib/phone'
 
 function checkApiKey(req: NextRequest): boolean {
   const expected = process.env.FLOWBOT_API_KEY
@@ -31,7 +32,10 @@ export async function GET(req: NextRequest) {
 
   try {
     const supabase = await createServiceClient()
-    const { data, error } = await supabase
+    const normalized = normalizePhone(phone)
+
+    // Try exact match first, then normalized suffix match
+    let { data, error } = await supabase
       .from('orders')
       .select('id, order_ref, status, total, currency, customer_name, payment_method, created_at')
       .eq('tenant_id', tenantId)
@@ -40,6 +44,18 @@ export async function GET(req: NextRequest) {
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle()
+
+    if (!data && !error && normalized !== phone) {
+      ;({ data, error } = await supabase
+        .from('orders')
+        .select('id, order_ref, status, total, currency, customer_name, payment_method, created_at')
+        .eq('tenant_id', tenantId)
+        .like('phone', `%${normalized}`)
+        .eq('status', 'awaiting_payment')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle())
+    }
 
     if (error) {
       return NextResponse.json({ error: 'Failed to query orders' }, { status: 500 })

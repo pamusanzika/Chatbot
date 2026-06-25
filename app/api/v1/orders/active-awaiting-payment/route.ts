@@ -9,11 +9,15 @@ function checkApiKey(req: NextRequest): boolean {
 }
 
 /**
- * GET /api/v1/orders/active-awaiting-payment?tenant_id=&phone=
+ * GET /api/v1/orders/active-awaiting-payment?tenant_id=&phone=&statuses=
  *
  * n8n calls this when a customer sends an image. If an awaiting_payment order
  * exists for this phone, n8n routes to the payment-proof branch instead of
- * image search. Returns the order or 404.
+ * image search.
+ *
+ * Optional `statuses` param: comma-separated list of statuses to match.
+ * Defaults to "awaiting_payment" when omitted (proof-upload branch).
+ * The duplicate-order guard passes "awaiting_payment,pending_verification".
  */
 export async function GET(req: NextRequest) {
   if (!checkApiKey(req)) {
@@ -22,6 +26,10 @@ export async function GET(req: NextRequest) {
 
   const tenantId = req.nextUrl.searchParams.get('tenant_id')
   const phone = req.nextUrl.searchParams.get('phone')
+  const statuses = (req.nextUrl.searchParams.get('statuses') || 'awaiting_payment')
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean)
 
   if (!tenantId) {
     return NextResponse.json({ error: 'tenant_id is required' }, { status: 400 })
@@ -33,14 +41,14 @@ export async function GET(req: NextRequest) {
   try {
     const supabase = await createServiceClient()
     const normalized = normalizePhone(phone)
+    const cols = 'id, order_ref, status, total, currency, customer_name, payment_method, created_at'
 
-    // Try exact match first, then normalized suffix match
     let { data, error } = await supabase
       .from('orders')
-      .select('id, order_ref, status, total, currency, customer_name, payment_method, created_at')
+      .select(cols)
       .eq('tenant_id', tenantId)
       .eq('phone', phone)
-      .eq('status', 'awaiting_payment')
+      .in('status', statuses)
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle()
@@ -48,10 +56,10 @@ export async function GET(req: NextRequest) {
     if (!data && !error && normalized !== phone) {
       ;({ data, error } = await supabase
         .from('orders')
-        .select('id, order_ref, status, total, currency, customer_name, payment_method, created_at')
+        .select(cols)
         .eq('tenant_id', tenantId)
         .like('phone', `%${normalized}`)
-        .eq('status', 'awaiting_payment')
+        .in('status', statuses)
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle())

@@ -10,7 +10,7 @@ import { OrderDrawer } from './order-drawer'
 import { fmtNum } from '@/lib/constants'
 import type { Order, OrderStatus } from '@/types'
 
-const STATUSES = ['All', 'pending', 'confirmed', 'preparing', 'shipped', 'delivered', 'cancelled']
+const STATUSES = ['All', 'pending', 'awaiting_payment', 'pending_verification', 'confirmed', 'preparing', 'shipped', 'delivered', 'cancelled']
 
 export function OrdersTab({ initialOrders }: { initialOrders: Order[] }) {
   const [status, setStatus] = useState('All')

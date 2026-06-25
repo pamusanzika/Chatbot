@@ -8,8 +8,10 @@ export const LANG_META: Record<Lang, { label: string; name: string; flag: string
 }
 
 export const STATUS_COLORS: Record<string, string> = {
-  pending:    '#f5a623',
-  confirmed:  '#22c55e',
+  pending:              '#f5a623',
+  awaiting_payment:     '#f5a623',
+  pending_verification: '#3b82f6',
+  confirmed:            '#22c55e',
   preparing:  '#3b82f6',
   processing: '#3b82f6',
   shipped:    '#7c6dfa',

@@ -3,17 +3,18 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
   LayoutDashboard, ShoppingBag, Truck, Tag, BookOpen, Users,
-  MessageSquare, AlertCircle, BarChart2, Settings, Bot,
+  MessageSquare, AlertCircle, BarChart2, Settings, Bot, CreditCard,
 } from 'lucide-react'
 
 const ICONS: Record<string, React.ElementType> = {
   LayoutDashboard, ShoppingBag, Truck, Tag, BookOpen, Users,
-  MessageSquare, AlertCircle, BarChart2, Settings, Bot,
+  MessageSquare, AlertCircle, BarChart2, Settings, Bot, CreditCard,
 }
 
 const NAV = [
   { id: 'overview',       label: 'Overview',       icon: 'LayoutDashboard', href: '/overview' },
   { id: 'orders',         label: 'Orders',         icon: 'ShoppingBag',     href: '/orders' },
+  { id: 'payments',       label: 'Payments',       icon: 'CreditCard',      href: '/payments' },
   { id: 'delivery',       label: 'Delivery Fees',  icon: 'Truck',           href: '/delivery' },
   { id: 'products',       label: 'Products',       icon: 'Tag',             href: '/products' },
   { id: 'knowledge-base', label: 'Knowledge Base', icon: 'BookOpen',        href: '/knowledge-base' },

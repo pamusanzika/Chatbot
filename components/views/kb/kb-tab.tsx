@@ -119,7 +119,6 @@ export function KnowledgeBaseTab({
     <div className="fb-stack" style={{ gap: 18 }}>
       <div className="fb-row-between">
         <div>
-          <h1 className="fb-page-title">Knowledge Base</h1>
           <p className="fb-page-sub">{entries.length} answers train your bot</p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>

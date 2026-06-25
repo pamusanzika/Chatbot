@@ -9,7 +9,7 @@ import { useCurrency } from '@/components/layout/currency-provider'
 import { updateOrderStatusAction } from '@/app/(dashboard)/orders/actions'
 import type { Order, OrderStatus } from '@/types'
 
-const ALL_STATUSES: OrderStatus[] = ['pending', 'confirmed', 'preparing', 'shipped', 'delivered', 'cancelled']
+const ALL_STATUSES: OrderStatus[] = ['pending', 'awaiting_payment', 'pending_verification', 'confirmed', 'preparing', 'shipped', 'delivered', 'cancelled']
 
 const LANG_LABELS: Record<string, string> = {
   EN: '🇬🇧 English',

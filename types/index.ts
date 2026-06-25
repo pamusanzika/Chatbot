@@ -4,7 +4,7 @@
 
 export type Theme = 'light' | 'dark'
 export type Lang = 'EN' | 'SI' | 'TA' | 'SL'
-export type OrderStatus = 'pending' | 'confirmed' | 'preparing' | 'shipped' | 'delivered' | 'cancelled'
+export type OrderStatus = 'pending' | 'awaiting_payment' | 'pending_verification' | 'confirmed' | 'preparing' | 'shipped' | 'delivered' | 'cancelled'
 export type PaymentMethod = 'COD' | 'Bank'
 export type ComplaintStatus = 'open' | 'progress' | 'resolved'
 export type UserRole = 'Owner' | 'Admin' | 'Staff'
@@ -250,6 +250,62 @@ export interface Usage {
   tokens_limit: number
   orders_processed: number
   active_customers: number
+}
+
+// ── Bank Detail ─────────────────────────────────────────────
+export interface BankDetail {
+  id: string
+  tenant_id: string
+  bank_name: string
+  account_name: string
+  account_number: string
+  branch_name: string
+  branch_code: string
+  notes: string
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface BankDetailAuditLog {
+  id: string
+  tenant_id: string
+  bank_detail_id: string | null
+  action: 'create' | 'update' | 'delete'
+  changes: Record<string, unknown>
+  performed_by: string
+  created_at: string
+}
+
+// ── Payment Proof ───────────────────────────────────────────
+export interface PaymentProof {
+  id: string
+  order_id: string
+  tenant_id: string
+  storage_path: string
+  mime_type: string
+  file_name: string
+  customer_reference: string | null
+  uploaded_at: string
+}
+
+// ── Audit Log ───────────────────────────────────────────────
+export interface AuditLog {
+  id: string
+  tenant_id: string
+  actor: string
+  action: string
+  entity_type: string
+  entity_id: string
+  meta: Record<string, unknown>
+  created_at: string
+}
+
+// ── Payment Review (joined) ─────────────────────────────────
+export interface PaymentOrder extends Order {
+  payment_proof: PaymentProof | null
+  signed_proof_url?: string
+  audit_logs?: AuditLog[]
 }
 
 // ── UI helpers ───────────────────────────────────────────────

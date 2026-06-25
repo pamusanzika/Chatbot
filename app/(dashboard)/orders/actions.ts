@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { getTenant } from '@/lib/auth'
-import { getOrder, updateOrderStatus } from '@/lib/db/orders'
+import { getOrder, updateOrderStatus, deleteOrders } from '@/lib/db/orders'
 import { notifyOrderStatusChange } from '@/lib/n8n-webhook'
 import type { OrderStatus } from '@/types'
 
@@ -17,4 +17,11 @@ export async function updateOrderStatusAction(orderId: string, status: OrderStat
   notifyOrderStatusChange(order, previousStatus)
 
   revalidatePath('/orders')
+}
+
+export async function deleteOrdersAction(orderIds: string[]): Promise<number> {
+  const { tenantId } = await getTenant()
+  const count = await deleteOrders(tenantId, orderIds)
+  revalidatePath('/orders')
+  return count
 }

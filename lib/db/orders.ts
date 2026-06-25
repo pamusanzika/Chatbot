@@ -99,6 +99,18 @@ export async function updateOrderStatus(
   return data as Order
 }
 
+export async function deleteOrders(tenantId: string, orderIds: string[]): Promise<number> {
+  const supabase = await createServiceClient()
+  const { data, error } = await supabase
+    .from('orders')
+    .delete()
+    .eq('tenant_id', tenantId)
+    .in('id', orderIds)
+    .select('id')
+  if (error) throw error
+  return data?.length ?? 0
+}
+
 export async function getOrderStats(tenantId: string) {
   const supabase = await createServiceClient()
   const now = new Date()

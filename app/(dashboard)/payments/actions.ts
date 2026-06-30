@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { getTenant } from '@/lib/auth'
 import { decidePayment } from '@/lib/db/payments'
 import { getOrder } from '@/lib/db/orders'
+import { upsertCustomerFromOrder } from '@/lib/db/customers'
 import { notifyOrderStatusChange } from '@/lib/n8n-webhook'
 
 export async function decidePaymentAction(
@@ -30,6 +31,10 @@ export async function decidePaymentAction(
 
   const updatedOrder = await getOrder(tenantId, orderId)
   if (updatedOrder) {
+    const customerPhone = updatedOrder.customer_phone ?? updatedOrder.phone
+    if (customerPhone) {
+      await upsertCustomerFromOrder(tenantId, customerPhone, updatedOrder.customer_name, updatedOrder.language)
+    }
     notifyOrderStatusChange(updatedOrder, 'pending_verification')
   }
 

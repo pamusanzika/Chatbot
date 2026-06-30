@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Eye, MessageCircle } from 'lucide-react'
 import { Card, SectionLabel } from '@/components/ui/card'
 import { Badge, LangBadge } from '@/components/ui/badge'
@@ -8,20 +8,53 @@ import { Input } from '@/components/ui/inputs'
 import { IconButton } from '@/components/ui/inputs'
 import { Avatar } from '@/components/ui/avatar'
 import { Drawer } from '@/components/ui/drawer'
-import { fmtNum, LANG_META, STATUS_COLORS } from '@/lib/constants'
+import { LANG_META } from '@/lib/constants'
 import { useCurrency } from '@/components/layout/currency-provider'
 import type { Customer, ChatMessage, Lang, Order } from '@/types'
 
-const CUSTOMERS: Customer[] = []
-const ORDERS: Order[] = []
-const ORDER_THREAD: ChatMessage[] = []
+const STATUS_LABELS: Record<string, string> = {
+  pending: 'Pending',
+  awaiting_payment: 'Awaiting Payment',
+  pending_verification: 'Pending Verification',
+  confirmed: 'Confirmed',
+  preparing: 'Preparing',
+  processing: 'Processing',
+  shipped: 'Shipped',
+  delivered: 'Delivered',
+  cancelled: 'Cancelled',
+}
+
+interface CustomerDetail {
+  customer: Customer
+  orders: Order[]
+  paymentSummary: Record<string, number>
+  recent_messages: ChatMessage[]
+}
 
 function CustomerDrawer({ customer, onClose }: { customer: Customer | null; onClose: () => void }) {
   const { fmt } = useCurrency()
+  const [detail, setDetail] = useState<CustomerDetail | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    if (!customer) {
+      setDetail(null)
+      return
+    }
+    setLoading(true)
+    setDetail(null)
+    fetch(`/api/dashboard/customers/${customer.id}`)
+      .then((r) => r.json())
+      .then((data) => setDetail(data))
+      .finally(() => setLoading(false))
+  }, [customer])
+
   if (!customer) return null
   const initials = customer.name.split(' ').map((w) => w[0]).join('').slice(0, 2)
   const color = LANG_META[customer.language]?.color ?? '#7c6dfa'
-  const orders = ORDERS.slice(0, 3)
+  const orders = detail?.orders ?? []
+  const paymentSummary = detail?.paymentSummary ?? {}
+  const messages = detail?.recent_messages ?? []
 
   return (
     <Drawer
@@ -45,10 +78,27 @@ function CustomerDrawer({ customer, onClose }: { customer: Customer | null; onCl
           </div>
         </div>
 
+        {/* Payment status summary */}
+        <section>
+          <SectionLabel>Payment status</SectionLabel>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
+            {Object.keys(paymentSummary).length === 0 && !loading && (
+              <span className="fb-muted">No orders yet</span>
+            )}
+            {Object.entries(paymentSummary).map(([status, count]) => (
+              <Badge key={status} tone={status}>
+                {count} {STATUS_LABELS[status] ?? status}
+              </Badge>
+            ))}
+          </div>
+        </section>
+
         {/* Orders */}
         <section>
           <SectionLabel>Orders ({customer.total_orders})</SectionLabel>
           <div className="fb-items" style={{ marginTop: 10 }}>
+            {loading && <div className="fb-muted">Loading orders…</div>}
+            {!loading && orders.length === 0 && <div className="fb-muted">No orders yet</div>}
             {orders.map((o) => (
               <div className="fb-item-row" key={o.id}>
                 <span className="mono fb-strong" style={{ minWidth: 80 }}>{o.order_ref}</span>
@@ -56,7 +106,7 @@ function CustomerDrawer({ customer, onClose }: { customer: Customer | null; onCl
                   {o.items[0]?.name}
                 </div>
                 <span className="mono fb-strong" style={{ flexShrink: 0 }}>{fmt(o.total)}</span>
-                <Badge tone={o.status}>{o.status[0].toUpperCase() + o.status.slice(1)}</Badge>
+                <Badge tone={o.status}>{STATUS_LABELS[o.status] ?? o.status}</Badge>
               </div>
             ))}
           </div>
@@ -66,7 +116,8 @@ function CustomerDrawer({ customer, onClose }: { customer: Customer | null; onCl
         <section>
           <SectionLabel>Recent chat</SectionLabel>
           <div className="fb-chat">
-            {ORDER_THREAD.slice(0, 3).map((m, i) => (
+            {!loading && messages.length === 0 && <div className="fb-muted">No chat history</div>}
+            {messages.map((m, i) => (
               <div key={i} className={`fb-bubble-row ${m.role}`}>
                 <div className={`fb-bubble ${m.role}`}>
                   <div>{m.content}</div>
@@ -81,12 +132,12 @@ function CustomerDrawer({ customer, onClose }: { customer: Customer | null; onCl
   )
 }
 
-export function CustomersTab() {
+export function CustomersTab({ initialCustomers }: { initialCustomers: Customer[] }) {
   const { fmt } = useCurrency()
   const [search, setSearch] = useState('')
   const [active, setActive] = useState<Customer | null>(null)
 
-  const rows = CUSTOMERS.filter((c) =>
+  const rows = initialCustomers.filter((c) =>
     !search || c.name.toLowerCase().includes(search.toLowerCase()) || c.phone.includes(search)
   )
 
@@ -95,7 +146,7 @@ export function CustomersTab() {
       <div className="fb-row-between">
         <div>
           <h1 className="fb-page-title">Customers</h1>
-          <p className="fb-page-sub">{CUSTOMERS.length} active customers</p>
+          <p className="fb-page-sub">{initialCustomers.length} active customers</p>
         </div>
         <Input placeholder="Search customers…" value={search} onChange={setSearch} style={{ width: 220 }} />
       </div>

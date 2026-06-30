@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase-server'
 import { getOrders, getOrder, updateOrderStatus } from '@/lib/db/orders'
+import { upsertCustomerFromOrder } from '@/lib/db/customers'
 import { lookupZoneByCity } from '@/lib/db/delivery-zones'
 import { notifyOrderStatusChange } from '@/lib/n8n-webhook'
 import { isBankTransfer, normalizePaymentMethod } from '@/lib/payments'
@@ -162,6 +163,7 @@ export async function POST(req: NextRequest) {
           .maybeSingle()
         if (error) return NextResponse.json({ error: 'Failed to update order' }, { status: 500 })
         if (!data) return NextResponse.json({ error: 'order_locked' }, { status: 409 })
+        if (phoneStr) await upsertCustomerFromOrder(tenant_id, phoneStr, customer_name.trim(), baseRow.language)
         return NextResponse.json({ order_id: data.order_ref, mode: 'updated', subtotal, delivery_fee, total })
       }
     }
@@ -189,12 +191,16 @@ export async function POST(req: NextRequest) {
           .in('status', ['pending', 'awaiting_payment'])
           .select('order_ref')
           .maybeSingle()
-        if (data) return NextResponse.json({ order_id: data.order_ref, mode: 'updated', subtotal, delivery_fee, total })
+        if (data) {
+          if (phoneStr) await upsertCustomerFromOrder(tenant_id, phoneStr, customer_name.trim(), baseRow.language)
+          return NextResponse.json({ order_id: data.order_ref, mode: 'updated', subtotal, delivery_fee, total })
+        }
       }
       return NextResponse.json({ error: 'order_locked' }, { status: 409 })
     }
     if (insErr) return NextResponse.json({ error: 'Failed to create order' }, { status: 500 })
 
+    if (phoneStr) await upsertCustomerFromOrder(tenant_id, phoneStr, customer_name.trim(), baseRow.language)
     return NextResponse.json({ order_id: ins.order_ref, mode: 'created', subtotal, delivery_fee, total })
   } catch (err) {
     console.error('[POST /api/v1/orders]', err)
@@ -277,6 +283,11 @@ export async function PATCH(req: NextRequest) {
 
     const previousStatus = existing.status
     const order = await updateOrderStatus(tenant_id, order_id, status as OrderStatus)
+
+    const customerPhone = order.customer_phone ?? order.phone
+    if (customerPhone) {
+      await upsertCustomerFromOrder(tenant_id, customerPhone, order.customer_name, order.language)
+    }
 
     notifyOrderStatusChange(order, previousStatus)
 

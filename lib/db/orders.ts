@@ -82,6 +82,18 @@ export async function getOrder(tenantId: string, orderId: string): Promise<Order
   return data
 }
 
+export async function getOrdersByCustomerPhone(tenantId: string, phone: string): Promise<Order[]> {
+  const supabase = await createServiceClient()
+  const { data, error } = await supabase
+    .from('orders')
+    .select('*')
+    .eq('tenant_id', tenantId)
+    .or(`customer_phone.eq.${phone},phone.eq.${phone}`)
+    .order('created_at', { ascending: false })
+  if (error) throw error
+  return data ?? []
+}
+
 export async function updateOrderStatus(
   tenantId: string,
   orderId: string,

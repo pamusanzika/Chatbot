@@ -1206,6 +1206,15 @@ h3 {
   border-radius: 10px;
 }
 
+.fb-item-row.fb-row-click {
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.fb-item-row.fb-row-click:hover {
+  background: var(--row-hover);
+}
+
 .fb-totals {
   margin-top: 14px;
   display: flex;

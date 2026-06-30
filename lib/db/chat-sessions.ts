@@ -82,28 +82,6 @@ export async function getChatMessages(tenantId: string, sessionId: string): Prom
   return (data ?? []) as unknown as ChatMessage[]
 }
 
-export async function getRecentMessagesByPhone(
-  tenantId: string,
-  phone: string,
-  limit = 10
-): Promise<ChatMessage[]> {
-  const supabase = await createServiceClient()
-
-  const { data: session } = await supabase
-    .from('chat_sessions')
-    .select('session_id')
-    .eq('tenant_id', tenantId)
-    .eq('phone', phone)
-    .order('last_message_at', { ascending: false })
-    .limit(1)
-    .maybeSingle()
-
-  if (!session) return []
-
-  const messages = await getChatMessages(tenantId, session.session_id)
-  return messages.slice(-limit).reverse()
-}
-
 export async function flagChatSession(
   tenantId: string,
   sessionId: string,

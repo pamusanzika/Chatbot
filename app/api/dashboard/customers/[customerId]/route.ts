@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getTenant } from '@/lib/auth'
 import { getCustomerDetail } from '@/lib/db/customers'
-import { getRecentMessagesByPhone } from '@/lib/db/chat-sessions'
 
 export async function GET(
   _req: NextRequest,
@@ -15,10 +14,5 @@ export async function GET(
     return NextResponse.json({ error: 'Not found' }, { status: 404 })
   }
 
-  const recentMessages = await getRecentMessagesByPhone(tenantId, detail.customer.phone)
-
-  return NextResponse.json({
-    ...detail,
-    recent_messages: recentMessages,
-  })
+  return NextResponse.json(detail)
 }

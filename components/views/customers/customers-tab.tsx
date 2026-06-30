@@ -2,15 +2,16 @@
 import { useEffect, useState } from 'react'
 import { Eye, MessageCircle } from 'lucide-react'
 import { Card, SectionLabel } from '@/components/ui/card'
-import { Badge, LangBadge } from '@/components/ui/badge'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/inputs'
 import { IconButton } from '@/components/ui/inputs'
 import { Avatar } from '@/components/ui/avatar'
 import { Drawer } from '@/components/ui/drawer'
+import { OrderDrawer } from '@/components/views/orders/order-drawer'
 import { LANG_META } from '@/lib/constants'
 import { useCurrency } from '@/components/layout/currency-provider'
-import type { Customer, ChatMessage, Lang, Order } from '@/types'
+import type { Customer, Order } from '@/types'
 
 const STATUS_LABELS: Record<string, string> = {
   pending: 'Pending',
@@ -28,13 +29,13 @@ interface CustomerDetail {
   customer: Customer
   orders: Order[]
   paymentSummary: Record<string, number>
-  recent_messages: ChatMessage[]
 }
 
 function CustomerDrawer({ customer, onClose }: { customer: Customer | null; onClose: () => void }) {
   const { fmt } = useCurrency()
   const [detail, setDetail] = useState<CustomerDetail | null>(null)
   const [loading, setLoading] = useState(false)
+  const [selectedOrder, setSelectedOrder] = useState<Order | null>(null)
 
   useEffect(() => {
     if (!customer) {
@@ -54,7 +55,6 @@ function CustomerDrawer({ customer, onClose }: { customer: Customer | null; onCl
   const color = LANG_META[customer.language]?.color ?? '#7c6dfa'
   const orders = detail?.orders ?? []
   const paymentSummary = detail?.paymentSummary ?? {}
-  const messages = detail?.recent_messages ?? []
 
   return (
     <Drawer
@@ -100,7 +100,11 @@ function CustomerDrawer({ customer, onClose }: { customer: Customer | null; onCl
             {loading && <div className="fb-muted">Loading orders…</div>}
             {!loading && orders.length === 0 && <div className="fb-muted">No orders yet</div>}
             {orders.map((o) => (
-              <div className="fb-item-row" key={o.id}>
+              <div
+                className="fb-item-row fb-row-click"
+                key={o.id}
+                onClick={() => setSelectedOrder(o)}
+              >
                 <span className="mono fb-strong" style={{ minWidth: 80 }}>{o.order_ref}</span>
                 <div style={{ flex: 1, minWidth: 0 }} className="fb-muted fb-truncate">
                   {o.items[0]?.name}
@@ -111,23 +115,8 @@ function CustomerDrawer({ customer, onClose }: { customer: Customer | null; onCl
             ))}
           </div>
         </section>
-
-        {/* Chat history */}
-        <section>
-          <SectionLabel>Recent chat</SectionLabel>
-          <div className="fb-chat">
-            {!loading && messages.length === 0 && <div className="fb-muted">No chat history</div>}
-            {messages.map((m, i) => (
-              <div key={i} className={`fb-bubble-row ${m.role}`}>
-                <div className={`fb-bubble ${m.role}`}>
-                  <div>{m.content}</div>
-                  <div className="fb-bubble-meta"><span>{m.created_at}</span></div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
       </div>
+      <OrderDrawer order={selectedOrder} onClose={() => setSelectedOrder(null)} />
     </Drawer>
   )
 }
@@ -157,7 +146,7 @@ export function CustomersTab({ initialCustomers }: { initialCustomers: Customer[
             <thead>
               <tr>
                 <th>Customer</th><th>Phone</th><th className="num">Orders</th>
-                <th className="num">Lifetime value</th><th>Last order</th><th>Lang</th><th>Actions</th>
+                <th className="num">Lifetime value</th><th>Last order</th><th>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -175,8 +164,15 @@ export function CustomersTab({ initialCustomers }: { initialCustomers: Customer[
                     <td className="mono fb-muted" style={{ fontSize: 13 }}>{c.phone}</td>
                     <td className="num mono">{c.total_orders}</td>
                     <td className="num mono fb-strong">{fmt(c.total_spent)}</td>
-                    <td className="fb-muted">{c.last_order_at?.slice(5, 10).replace('-', ' ')}</td>
-                    <td><LangBadge code={c.language as Lang} /></td>
+                    <td className="fb-muted">
+                      {c.last_order_at
+                        ? new Date(c.last_order_at).toLocaleDateString('en-LK', {
+                            year: 'numeric',
+                            month: 'short',
+                            day: 'numeric',
+                          })
+                        : '—'}
+                    </td>
                     <td onClick={(e) => e.stopPropagation()}>
                       <div className="fb-actions">
                         <IconButton icon={MessageCircle} tone="#25d366" title="WhatsApp" />

@@ -1,2 +1,2 @@
-create index if not exists chat_messages_tenant_timestamp
-  on chat_messages(tenant_id, timestamp desc);
+create index if not exists chat_messages_tenant_created_at
+  on chat_messages(tenant_id, created_at desc);

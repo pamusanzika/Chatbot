@@ -84,10 +84,10 @@ export async function getAnalyticsData(
     { data: usageRow },
     { data: customersRows },
   ] = await Promise.all([
-    supabase.from('chat_messages').select('language, from_role, text, timestamp').eq('tenant_id', tenantId)
-      .gte('timestamp', range.start).lt('timestamp', range.end),
-    supabase.from('chat_sessions').select('intent, started_at').eq('tenant_id', tenantId)
-      .gte('started_at', range.start).lt('started_at', range.end),
+    supabase.from('chat_messages').select('language, role, content, created_at').eq('tenant_id', tenantId)
+      .gte('created_at', range.start).lt('created_at', range.end),
+    supabase.from('chat_sessions').select('intent, created_at').eq('tenant_id', tenantId)
+      .gte('created_at', range.start).lt('created_at', range.end),
     supabase.from('orders').select('status, total, items, delivery_zone, chat_session_id, created_at')
       .eq('tenant_id', tenantId).gte('created_at', range.start).lt('created_at', range.end),
     supabase.from('usage').select('*').eq('tenant_id', tenantId)
@@ -105,7 +105,7 @@ export async function getAnalyticsData(
   const volumeByDay: Record<string, { EN: number; SI: number; TA: number; SL: number }> = {}
   for (const day of days) volumeByDay[day] = { EN: 0, SI: 0, TA: 0, SL: 0 }
   for (const m of msgs) {
-    const key = dayKey(m.timestamp)
+    const key = dayKey(m.created_at)
     if (!volumeByDay[key]) continue
     const lang = ((m.language as string) ?? 'EN') as Lang
     if (lang in volumeByDay[key]) volumeByDay[key][lang as 'EN' | 'SI' | 'TA' | 'SL']++
@@ -131,7 +131,7 @@ export async function getAnalyticsData(
   const sessionsByDay: Record<string, number> = {}
   for (const day of days) sessionsByDay[day] = 0
   for (const s of sess) {
-    const key = dayKey(s.started_at)
+    const key = dayKey(s.created_at)
     if (key in sessionsByDay) sessionsByDay[key]++
   }
   const ordersByDay: Record<string, number> = {}
@@ -151,12 +151,12 @@ export async function getAnalyticsData(
   // ── Top customer questions (most frequent user messages) ──
   const questionCounts = new Map<string, { display: string; n: number }>()
   for (const m of msgs) {
-    if (m.from_role !== 'user') continue
-    const norm = m.text.trim().toLowerCase()
+    if (m.role !== 'user') continue
+    const norm = m.content.trim().toLowerCase()
     if (!norm) continue
     const entry = questionCounts.get(norm)
     if (entry) entry.n++
-    else questionCounts.set(norm, { display: m.text.trim(), n: 1 })
+    else questionCounts.set(norm, { display: m.content.trim(), n: 1 })
   }
   const topQuestions = Array.from(questionCounts.values())
     .sort((a, b) => b.n - a.n)

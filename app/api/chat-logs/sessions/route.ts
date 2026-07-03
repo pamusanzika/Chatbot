@@ -12,8 +12,9 @@ export async function GET(req: NextRequest) {
     const flaggedParam = params.get('flagged')
     const flagged = flaggedParam === 'true' ? true : flaggedParam === 'false' ? false : undefined
     const search = params.get('search') ?? undefined
+    const intent = params.get('intent') ?? undefined
 
-    const result = await getChatSessions(tenantId, { language, flagged, search }, page)
+    const result = await getChatSessions(tenantId, { language, flagged, search, intent }, page)
     return NextResponse.json({ ...result, page })
   } catch (err) {
     const status = (err as Error).message.includes('Not authenticated') ? 401 : 500

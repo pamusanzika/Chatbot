@@ -5,9 +5,57 @@ import { upsertCustomerFromOrder } from '@/lib/db/customers'
 import { lookupZoneByCity } from '@/lib/db/delivery-zones'
 import { notifyOrderStatusChange } from '@/lib/n8n-webhook'
 import { isBankTransfer, normalizePaymentMethod } from '@/lib/payments'
+import { normalizePhone } from '@/lib/phone'
 import type { OrderItem, OrderStatus } from '@/types'
 
 const VALID_STATUSES: OrderStatus[] = ['pending', 'awaiting_payment', 'pending_verification', 'confirmed', 'preparing', 'shipped', 'delivered', 'cancelled']
+
+// Only these statuses count as an unresolved draft eligible for upsert.
+// pending_verification/confirmed/preparing/shipped/delivered/cancelled are past the draft
+// stage and must never be matched or overwritten by a new placement.
+const DRAFT_STATUSES = ['pending', 'awaiting_payment'] as const
+
+// Bound on how old a draft can be and still be silently updated, so a
+// long-abandoned draft doesn't absorb an unrelated fresh purchase.
+const DRAFT_UPSERT_WINDOW_HOURS = 24
+
+async function findDraftOrder(
+  supabase: Awaited<ReturnType<typeof createServiceClient>>,
+  tenantId: string,
+  phone: string
+): Promise<{ id: string } | null> {
+  const cutoff = new Date(Date.now() - DRAFT_UPSERT_WINDOW_HOURS * 60 * 60 * 1000).toISOString()
+  const normalized = normalizePhone(phone)
+
+  const { data } = await supabase
+    .from('orders')
+    .select('id')
+    .eq('tenant_id', tenantId)
+    .eq('phone', phone)
+    .in('status', DRAFT_STATUSES)
+    .gte('created_at', cutoff)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (data) return data
+
+  if (normalized && normalized !== phone) {
+    const { data: fallback } = await supabase
+      .from('orders')
+      .select('id')
+      .eq('tenant_id', tenantId)
+      .like('phone', `%${normalized}`)
+      .in('status', DRAFT_STATUSES)
+      .gte('created_at', cutoff)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (fallback) return fallback
+  }
+
+  return null
+}
 
 function checkApiKey(req: NextRequest): boolean {
   const expected = process.env.FLOWBOT_API_KEY
@@ -143,22 +191,17 @@ export async function POST(req: NextRequest) {
 
     const initialStatus = isBankTransfer(payment_method as string) ? 'awaiting_payment' : 'pending'
 
-    // Upsert-on-draft: find the customer's open draft order (pending or awaiting_payment)
+    // Upsert-on-draft: find the customer's open draft order (pending or awaiting_payment),
+    // created within the last DRAFT_UPSERT_WINDOW_HOURS hours only.
     if (phoneStr) {
-      const { data: open } = await supabase
-        .from('orders')
-        .select('id')
-        .eq('tenant_id', tenant_id)
-        .eq('phone', phoneStr)
-        .in('status', ['pending', 'awaiting_payment'])
-        .maybeSingle()
+      const open = await findDraftOrder(supabase, tenant_id, phoneStr)
 
       if (open) {
         const { data, error } = await supabase
           .from('orders')
           .update({ ...baseRow, status: initialStatus })
           .eq('id', open.id)
-          .in('status', ['pending', 'awaiting_payment'])
+          .in('status', DRAFT_STATUSES)
           .select('order_ref')
           .maybeSingle()
         if (error) return NextResponse.json({ error: 'Failed to update order' }, { status: 500 })
@@ -176,19 +219,13 @@ export async function POST(req: NextRequest) {
       .single()
 
     if (insErr?.code === '23505' && phoneStr) {
-      const { data: again } = await supabase
-        .from('orders')
-        .select('id')
-        .eq('tenant_id', tenant_id)
-        .eq('phone', phoneStr)
-        .in('status', ['pending', 'awaiting_payment'])
-        .maybeSingle()
+      const again = await findDraftOrder(supabase, tenant_id, phoneStr)
       if (again) {
         const { data } = await supabase
           .from('orders')
           .update({ ...baseRow, status: initialStatus })
           .eq('id', again.id)
-          .in('status', ['pending', 'awaiting_payment'])
+          .in('status', DRAFT_STATUSES)
           .select('order_ref')
           .maybeSingle()
         if (data) {

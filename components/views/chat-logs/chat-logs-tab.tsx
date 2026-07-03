@@ -163,6 +163,7 @@ export function ChatLogsTab() {
   const [search, setSearch] = useState('')
   const [langFilter, setLangFilter] = useState('')
   const [flagFilter, setFlagFilter] = useState('')
+  const [intentFilter, setIntentFilter] = useState('')
   const [loading, setLoading] = useState(true)
   const [active, setActive] = useState<ChatSession | null>(null)
 
@@ -172,6 +173,7 @@ export function ChatLogsTab() {
     if (search) qs.set('search', search)
     if (langFilter) qs.set('language', langFilter)
     if (flagFilter) qs.set('flagged', flagFilter)
+    if (intentFilter) qs.set('intent', intentFilter)
 
     const res = await fetch(`/api/chat-logs/sessions?${qs}`)
     const data = await res.json()
@@ -179,9 +181,9 @@ export function ChatLogsTab() {
     setTotal(data.total ?? 0)
     setTotalPages(data.totalPages ?? 1)
     setLoading(false)
-  }, [search, langFilter, flagFilter])
+  }, [search, langFilter, flagFilter, intentFilter])
 
-  useEffect(() => { setPage(1) }, [search, langFilter, flagFilter])
+  useEffect(() => { setPage(1) }, [search, langFilter, flagFilter, intentFilter])
   useEffect(() => { fetchSessions(page) }, [page, fetchSessions])
 
   useEffect(() => {
@@ -230,6 +232,16 @@ export function ChatLogsTab() {
             <option value="">All</option>
             <option value="true">Flagged</option>
             <option value="false">Not Flagged</option>
+          </select>
+          <select
+            className="fb-select"
+            value={intentFilter}
+            onChange={(e) => setIntentFilter(e.target.value)}
+          >
+            <option value="">All Intents</option>
+            {Object.keys(INTENT_TONE).map((intent) => (
+              <option key={intent} value={intent}>{intent}</option>
+            ))}
           </select>
         </div>
       </div>

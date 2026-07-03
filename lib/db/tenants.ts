@@ -15,3 +15,16 @@ export async function getTenantByPhoneNumberId(phoneNumberId: string): Promise<T
   if (error) throw error
   return data as unknown as Tenant | null
 }
+
+export type TenantWaCredentials = { id: string; wa_access_token: string | null; phone_number_id: string | null }
+
+export async function getTenantWaCredentialsById(tenantId: string): Promise<TenantWaCredentials | null> {
+  const supabase = await createServiceClient()
+  const { data, error } = await supabase
+    .from('tenants')
+    .select('id, wa_access_token, phone_number_id')
+    .eq('id', tenantId)
+    .maybeSingle()
+  if (error) throw error
+  return data as unknown as TenantWaCredentials | null
+}

@@ -42,7 +42,8 @@ export async function POST(req: NextRequest) {
       session_id,
       phone,
       typeof channel === 'string' ? channel : null,
-      typeof language === 'string' ? language : null
+      typeof language === 'string' ? language : null,
+      typeof intent === 'string' ? intent : null
     )
 
     const message = await insertChatMessage(

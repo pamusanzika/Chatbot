@@ -5,6 +5,7 @@ export interface ChatSessionFilters {
   language?: string
   flagged?: boolean
   search?: string
+  intent?: string
 }
 
 const SESSION_FIELDS =
@@ -26,6 +27,7 @@ export async function getChatSessions(
     if (filters.language) q = q.eq('language', filters.language)
     if (filters.flagged !== undefined) q = q.eq('flagged', filters.flagged)
     if (filters.search) q = q.ilike('phone', `%${filters.search}%`)
+    if (filters.intent) q = q.eq('intent', filters.intent)
     return q
   }
 
@@ -34,6 +36,7 @@ export async function getChatSessions(
     if (filters.language) q = q.eq('language', filters.language)
     if (filters.flagged !== undefined) q = q.eq('flagged', filters.flagged)
     if (filters.search) q = q.ilike('phone', `%${filters.search}%`)
+    if (filters.intent) q = q.eq('intent', filters.intent)
     return q
   }
 
@@ -149,7 +152,8 @@ export async function upsertChatSession(
   sessionId: string,
   phone: string,
   channel: string | null,
-  language: string | null
+  language: string | null,
+  intent: string | null
 ): Promise<void> {
   const supabase = await createServiceClient()
   const now = new Date().toISOString()
@@ -178,6 +182,7 @@ export async function upsertChatSession(
     .update({
       last_message_at: now,
       language: language ?? undefined,
+      intent: intent ?? undefined,
       message_count: ((row?.message_count as number) ?? 0) + 1,
     })
     .eq('tenant_id', tenantId)

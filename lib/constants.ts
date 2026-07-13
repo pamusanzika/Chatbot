@@ -82,3 +82,9 @@ export const fmtCurrency = (n: number, currency: string = 'LKR') =>
 /** @deprecated use useCurrency().fmt instead — kept for non-tenant-scoped contexts */
 export const fmtLKR = (n: number) => fmtCurrency(n, 'LKR')
 export const fmtNum = (n: number) => n.toLocaleString('en-LK')
+
+export function fmtCompact(n: number): string {
+  if (n < 1000) return fmtNum(n)
+  if (n < 1_000_000) return `${(n / 1000).toFixed(1).replace(/\.0$/, '')}K`
+  return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`
+}

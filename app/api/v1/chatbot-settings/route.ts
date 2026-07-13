@@ -37,6 +37,7 @@ export async function GET(req: NextRequest) {
       fallback_message: "Sorry, I didn't understand that. Can you rephrase?",
       handoff_triggers: 'speak to agent, human, real person',
       handoff_message: 'Connecting you to a team member, please hold',
+      support_number: '',
     }
 
     return NextResponse.json({

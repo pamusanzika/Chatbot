@@ -1,7 +1,13 @@
 {
   "permissions": {
     "allow": [
-      "Bash(npx tsc *)"
+      "Bash(npx tsc *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(echo 'EMBED_API_KEY=\"pa-Sc2JljpEMe8E9qlooy5IqeZe-HIQ38bR7JnyY7eSpiC\"')",
+      "Bash(echo 'EMBED_MODEL=\"voyage-multimodal-3\"')",
+      "Bash(echo 'IMAGE_MATCH_THRESHOLD=\"0.20\"')",
+      "Bash(curl -s https://api.voyageai.com/v1/multimodalembeddings -H 'Content-Type: application/json' -H 'Authorization: Bearer pa-Sc2JljpEMe8E9qlooy5IqeZe-HIQ38bR7JnyY7eSpiC' -d '{\"model\":\"voyage-multimodal-3\",\"inputs\":[{\"content\":[{\"type\":\"text\",\"text\":\"hello\"}]}],\"input_type\":\"document\"}')"
     ]
   }
 }

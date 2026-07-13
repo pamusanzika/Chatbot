@@ -1,96 +1,259 @@
 'use client'
-import { useState } from 'react'
-import { Eye, Plus } from 'lucide-react'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { Eye, Send } from 'lucide-react'
 import { Card, SectionLabel } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Select } from '@/components/ui/inputs'
-import { Input } from '@/components/ui/inputs'
 import { IconButton } from '@/components/ui/inputs'
+import { PillNav } from '@/components/ui/inputs'
 import { Avatar } from '@/components/ui/avatar'
 import { Drawer } from '@/components/ui/drawer'
-import { STATUS_COLORS } from '@/lib/constants'
-import type { Complaint } from '@/types'
-
-const COMPLAINTS: Complaint[] = []
+import type { Complaint, ChatMessage, Order, ConversationControl } from '@/types'
 
 const STATUS_LABEL: Record<string, string> = {
   open: 'Open', progress: 'In Progress', resolved: 'Resolved',
 }
 
-function ComplaintDrawer({ complaint, onClose }: { complaint: Complaint | null; onClose: () => void }) {
-  const [note, setNote] = useState('')
+function fmt(iso: string) {
+  return new Date(iso).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' })
+}
+
+function timeWaiting(iso: string) {
+  const ms = Date.now() - new Date(iso).getTime()
+  const mins = Math.floor(ms / 60000)
+  if (mins < 1) return 'just now'
+  if (mins < 60) return `${mins}m`
+  const hours = Math.floor(mins / 60)
+  if (hours < 24) return `${hours}h ${mins % 60}m`
+  return `${Math.floor(hours / 24)}d ${hours % 24}h`
+}
+
+function bubbleRole(m: ChatMessage): 'customer' | 'bot' | 'agent' {
+  if (m.role === 'user') return 'customer'
+  if (m.intent === 'agent_reply') return 'agent'
+  return 'bot'
+}
+
+// ── Ticket Drawer ─────────────────────────────────────────────────────────
+
+function TicketDrawer({
+  ticket,
+  onClose,
+  onResolved,
+}: {
+  ticket: Complaint | null
+  onClose: () => void
+  onResolved: (id: string) => void
+}) {
+  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [control, setControl] = useState<ConversationControl>('bot')
+  const [recentOrders, setRecentOrders] = useState<Order[]>([])
+  const [loading, setLoading] = useState(false)
+  const [draft, setDraft] = useState('')
+  const [sending, setSending] = useState(false)
+  const [resolving, setResolving] = useState(false)
+  const scrollRef = useRef<HTMLDivElement>(null)
+
+  const fetchThread = useCallback(async (ticketId: string, showSpinner: boolean) => {
+    if (showSpinner) setLoading(true)
+    try {
+      const res = await fetch(`/api/complaints/${ticketId}`)
+      const data = await res.json()
+      setMessages(data.messages ?? [])
+      setControl(data.control ?? 'bot')
+      setRecentOrders(data.recentOrders ?? [])
+    } catch {}
+    if (showSpinner) setLoading(false)
+  }, [])
+
+  useEffect(() => {
+    if (!ticket) return
+    fetchThread(ticket.id, true)
+    const interval = setInterval(() => fetchThread(ticket.id, false), 4500)
+    return () => clearInterval(interval)
+  }, [ticket?.id, fetchThread])
+
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })
+  }, [messages])
+
+  async function handleSend() {
+    if (!ticket || !draft.trim() || sending) return
+    const text = draft.trim()
+    setSending(true)
+    setDraft('')
+
+    // Optimistic agent bubble — reconciled against the next fetch below.
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: `optimistic-${Date.now()}`,
+        session_id: '',
+        tenant_id: ticket.tenant_id,
+        role: 'assistant',
+        content: text,
+        language: null,
+        intent: 'agent_reply',
+        tokens_used: null,
+        created_at: new Date().toISOString(),
+      },
+    ])
+
+    try {
+      await fetch(`/api/complaints/${ticket.id}/reply`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: text }),
+      })
+    } catch {}
+
+    await fetchThread(ticket.id, false)
+    setSending(false)
+  }
+
+  async function handleResolve() {
+    if (!ticket) return
+    if (!confirm('Resolve this ticket? The bot will resume replying to this customer.')) return
+    setResolving(true)
+    try {
+      await fetch(`/api/complaints/${ticket.id}/resolve`, { method: 'POST' })
+      setControl('bot')
+      onResolved(ticket.id)
+    } catch {}
+    setResolving(false)
+  }
+
+  const isResolved = ticket?.status === 'resolved'
 
   return (
     <Drawer
-      open={!!complaint}
+      open={!!ticket}
       onClose={onClose}
-      title={complaint ? `Complaint ${complaint.complaint_ref}` : ''}
-      subtitle={complaint?.customer_name}
+      width={780}
+      title={ticket ? `Ticket ${ticket.complaint_ref}` : ''}
+      subtitle={ticket ? `${ticket.customer_name} · ${ticket.phone ?? '—'}` : ''}
       headerRight={
-        complaint ? (
-          <Select
-            value={STATUS_LABEL[complaint.status] ?? 'Open'}
-            options={['Open', 'In Progress', 'Resolved']}
-            style={{ width: 140 }}
-          />
+        ticket && !isResolved ? (
+          <Button variant="secondary" size="sm" onClick={handleResolve} disabled={resolving}>
+            {resolving ? 'Resolving…' : 'Resolve'}
+          </Button>
         ) : undefined
       }
     >
-      {complaint && (
-        <div className="fb-stack" style={{ gap: 20 }}>
-          {/* Detail */}
-          <section>
-            <SectionLabel>Detail</SectionLabel>
-            <div className="fb-card fb-stack" style={{ padding: 16, background: 'var(--surface)', marginTop: 8 }}>
-              <div className="fb-strong" style={{ marginBottom: 4 }}>{complaint.customer_name}</div>
-              <div>{complaint.summary}</div>
-            </div>
-          </section>
+      {ticket && (
+        <div className="fb-stack" style={{ gap: 16 }}>
+          {control === 'human' && !isResolved && (
+            <div className="fb-banner-paused">🔴 Bot paused — you&apos;re handling this</div>
+          )}
+          {(control === 'bot' || isResolved) && (
+            <div className="fb-banner-resumed">✅ Bot resumed for this customer</div>
+          )}
 
-          {/* Internal notes */}
-          <section>
-            <SectionLabel>Internal notes</SectionLabel>
-            <div className="fb-notes">
-              {complaint.notes.map((n, i) => (
-                <div className="fb-note" key={i}>
-                  <Avatar initials={n.author} color="#3b82f6" size={26} />
-                  <div>
-                    <div className="fb-strong" style={{ fontSize: 13 }}>
-                      {n.author} · {n.created_at}
-                    </div>
-                    <div>{n.text}</div>
+          {recentOrders.length > 0 && (
+            <section>
+              <SectionLabel>Recent orders</SectionLabel>
+              <div className="fb-notes" style={{ marginTop: 6 }}>
+                {recentOrders.map((o) => (
+                  <div key={o.id} className="fb-row-between" style={{ fontSize: 13 }}>
+                    <span className="mono fb-strong">{o.order_ref}</span>
+                    <Badge tone={o.status}>{o.status}</Badge>
+                    <span className="fb-muted">{fmt(o.created_at)}</span>
                   </div>
-                </div>
-              ))}
-              {complaint.notes.length === 0 && (
-                <div className="fb-muted" style={{ fontSize: 13 }}>No notes yet.</div>
-              )}
-            </div>
-            <div className="fb-note-input">
-              <Input full placeholder="Add a note…" value={note} onChange={setNote} />
-              <Button size="sm">Add</Button>
+                ))}
+              </div>
+            </section>
+          )}
+
+          <section>
+            <SectionLabel>Triggering message</SectionLabel>
+            <div className="fb-card" style={{ padding: 12, background: 'var(--surface)', marginTop: 6, fontSize: 13 }}>
+              {ticket.summary}
             </div>
           </section>
 
-          {/* WA reply */}
           <section>
-            <SectionLabel>Reply via WhatsApp</SectionLabel>
-            <textarea className="fb-textarea" rows={3} placeholder="Type your reply to the customer…" />
-            <div style={{ marginTop: 8 }}>
-              <Button variant="secondary">Send WA reply</Button>
+            <SectionLabel>Conversation</SectionLabel>
+            <div className="fb-chat" ref={scrollRef} style={{ maxHeight: 380, overflowY: 'auto' }}>
+              {loading && <p className="fb-muted" style={{ padding: 16 }}>Loading…</p>}
+              {!loading && messages.length === 0 && (
+                <p className="fb-muted" style={{ padding: 16 }}>No messages yet.</p>
+              )}
+              {messages.map((m) => {
+                const kind = bubbleRole(m)
+                return (
+                  <div key={m.id} className={`fb-bubble-row ${kind}`}>
+                    <div className={`fb-bubble ${kind}`}>
+                      {kind === 'bot' && <div className="fb-bubble-tag">Bot</div>}
+                      {kind === 'agent' && <div className="fb-bubble-tag">You</div>}
+                      <div style={{ whiteSpace: 'pre-wrap' }}>{m.content}</div>
+                      <div className="fb-bubble-meta">
+                        <span>{fmt(m.created_at)}</span>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
             </div>
           </section>
+
+          {!isResolved && (
+            <section>
+              <div className="fb-note-input">
+                <textarea
+                  className="fb-textarea"
+                  rows={2}
+                  placeholder={control === 'human' ? 'Reply to the customer…' : 'Bot is handling this conversation'}
+                  value={draft}
+                  disabled={sending}
+                  onChange={(e) => setDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault()
+                      handleSend()
+                    }
+                  }}
+                />
+                <Button icon={Send} onClick={handleSend} disabled={sending || !draft.trim()}>
+                  {sending ? 'Sending…' : 'Send'}
+                </Button>
+              </div>
+            </section>
+          )}
         </div>
       )}
     </Drawer>
   )
 }
 
+// ── Main Tab ─────────────────────────────────────────────────────────────
+
 export function ComplaintsTab() {
+  const [tickets, setTickets] = useState<Complaint[]>([])
+  const [filter, setFilter] = useState<'Open' | 'Resolved' | 'All'>('Open')
+  const [loading, setLoading] = useState(true)
   const [active, setActive] = useState<Complaint | null>(null)
-  const open = COMPLAINTS.filter((c) => c.status !== 'resolved').length
-  const resolved = COMPLAINTS.filter((c) => c.status === 'resolved').length
+
+  const statusParam = filter === 'Open' ? 'open' : filter === 'Resolved' ? 'resolved' : 'all'
+
+  const fetchTickets = useCallback(async () => {
+    setLoading(true)
+    try {
+      const res = await fetch(`/api/complaints?status=${statusParam}`)
+      const data = await res.json()
+      setTickets(data.complaints ?? [])
+    } catch {}
+    setLoading(false)
+  }, [statusParam])
+
+  useEffect(() => { fetchTickets() }, [fetchTickets])
+
+  function handleResolved(id: string) {
+    setTickets((prev) => (filter === 'Open' ? prev.filter((t) => t.id !== id) : prev.map((t) => t.id === id ? { ...t, status: 'resolved' } : t)))
+    setActive((prev) => prev && prev.id === id ? { ...prev, status: 'resolved' } : prev)
+  }
+
+  const open = tickets.filter((t) => t.status !== 'resolved').length
+  const resolved = tickets.filter((t) => t.status === 'resolved').length
 
   return (
     <div className="fb-stack" style={{ gap: 18 }}>
@@ -99,6 +262,7 @@ export function ComplaintsTab() {
           <h1 className="fb-page-title">Complaints</h1>
           <p className="fb-page-sub">{open} open · {resolved} resolved</p>
         </div>
+        <PillNav items={['Open', 'Resolved', 'All']} value={filter} onChange={(v) => setFilter(v as typeof filter)} />
       </div>
 
       <Card pad={0}>
@@ -106,37 +270,42 @@ export function ComplaintsTab() {
           <table className="fb-table">
             <thead>
               <tr>
-                <th>ID</th><th>Customer</th><th>Summary</th>
-                <th>Status</th><th>Assigned</th><th>Date</th><th>Actions</th>
+                <th>ID</th><th>Customer</th><th>Message</th>
+                <th>Waiting</th><th>Status</th><th>Assigned</th><th>Actions</th>
               </tr>
             </thead>
             <tbody>
-              {COMPLAINTS.map((c) => (
+              {loading && (
+                <tr><td colSpan={7} style={{ textAlign: 'center', padding: 24 }} className="fb-muted">Loading…</td></tr>
+              )}
+              {!loading && tickets.length === 0 && (
+                <tr><td colSpan={7} style={{ textAlign: 'center', padding: 24 }} className="fb-muted">No tickets.</td></tr>
+              )}
+              {tickets.map((c) => (
                 <tr key={c.id} className="fb-row-click" onClick={() => setActive(c)}>
                   <td className="mono fb-strong">{c.complaint_ref}</td>
-                  <td>{c.customer_name}</td>
+                  <td>
+                    <div className="fb-strong">{c.customer_name}</div>
+                    <div className="fb-muted mono" style={{ fontSize: 12 }}>{c.phone}</div>
+                  </td>
                   <td
                     className="fb-muted"
                     style={{ maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
                   >
                     {c.summary}
                   </td>
+                  <td className="fb-muted">{c.status === 'resolved' ? '—' : timeWaiting(c.created_at)}</td>
                   <td>
                     <Badge tone={c.status} dot>{STATUS_LABEL[c.status]}</Badge>
                   </td>
                   <td>
                     {c.assigned_to && (
-                      <Avatar
-                        initials={c.assigned_to}
-                        color={c.assigned_to === 'AP' ? '#7c6dfa' : '#3b82f6'}
-                        size={26}
-                      />
+                      <Avatar initials={c.assigned_to} color={c.assigned_to === 'AP' ? '#7c6dfa' : '#3b82f6'} size={26} />
                     )}
                   </td>
-                  <td className="fb-muted">{c.created_at.slice(5)}</td>
                   <td onClick={(e) => e.stopPropagation()}>
                     <div className="fb-actions">
-                      <IconButton icon={Eye} title="View" onClick={() => setActive(c)} />
+                      <IconButton icon={Eye} title="Open chat" onClick={() => setActive(c)} />
                     </div>
                   </td>
                 </tr>
@@ -146,7 +315,7 @@ export function ComplaintsTab() {
         </div>
       </Card>
 
-      <ComplaintDrawer complaint={active} onClose={() => setActive(null)} />
+      <TicketDrawer ticket={active} onClose={() => setActive(null)} onResolved={handleResolved} />
     </div>
   )
 }

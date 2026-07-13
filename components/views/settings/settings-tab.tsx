@@ -454,6 +454,7 @@ function ChatbotSection({ tenant }: { tenant: Tenant }) {
   const [fallback, setFallback] = useState(s?.fallback_message ?? "Sorry, I didn't understand that. Can you rephrase?")
   const [handoffTriggers, setHandoffTriggers] = useState(s?.handoff_triggers ?? 'speak to agent, human, real person')
   const [handoffMsg, setHandoffMsg] = useState(s?.handoff_message ?? 'Connecting you to a team member, please hold')
+  const [supportNumber, setSupportNumber] = useState(s?.support_number ?? '')
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
 
@@ -473,6 +474,7 @@ function ChatbotSection({ tenant }: { tenant: Tenant }) {
           fallback_message: fallback,
           handoff_triggers: handoffTriggers,
           handoff_message: handoffMsg,
+          support_number: supportNumber,
         },
       })
       setSaved(true)
@@ -527,6 +529,18 @@ function ChatbotSection({ tenant }: { tenant: Tenant }) {
           <Field label="Handoff message">
             <Input full value={handoffMsg} onChange={setHandoffMsg} />
           </Field>
+        </div>
+      </Card>
+
+      <Card>
+        <SectionLabel>Support</SectionLabel>
+        <div style={{ marginTop: 12 }}>
+          <Field label="Support contact number">
+            <Input full value={supportNumber} onChange={setSupportNumber} placeholder="+94771234567" />
+          </Field>
+          <div className="fb-muted" style={{ fontSize: 12, marginTop: 6 }}>
+            Given to customers when the bot can&apos;t make changes to their order itself (e.g. it&apos;s already confirmed).
+          </div>
         </div>
         <div style={{ marginTop: 16, display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 10 }}>
           {saved && <span className="fb-muted" style={{ fontSize: 12, color: '#2dd4a0' }}>Saved</span>}

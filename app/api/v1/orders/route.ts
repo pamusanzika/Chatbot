@@ -1,12 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { revalidatePath } from 'next/cache'
 import { createServiceClient } from '@/lib/supabase-server'
-import { getOrders, getOrder, updateOrderStatus } from '@/lib/db/orders'
+import { getOrders, getOrder, updateOrderStatus, ORDER_SNAPSHOT_COLUMNS, toOrderSnapshot } from '@/lib/db/orders'
 import { upsertCustomerFromOrder } from '@/lib/db/customers'
-import { lookupZoneByCity } from '@/lib/db/delivery-zones'
+import { resolveDeliveryFee } from '@/lib/db/delivery-zones'
+import { resolveOrderItems, UnknownItemError } from '@/lib/db/order-items'
 import { notifyOrderStatusChange } from '@/lib/n8n-webhook'
 import { isBankTransfer, normalizePaymentMethod } from '@/lib/payments'
 import { normalizePhone } from '@/lib/phone'
-import type { OrderItem, OrderStatus } from '@/types'
+import type { OrderStatus } from '@/types'
 
 const VALID_STATUSES: OrderStatus[] = ['pending', 'awaiting_payment', 'pending_verification', 'confirmed', 'preparing', 'shipped', 'delivered', 'cancelled']
 
@@ -63,11 +65,6 @@ function checkApiKey(req: NextRequest): boolean {
   return req.headers.get('x-api-key') === expected
 }
 
-function cityFromAddress(address: string): string | null {
-  const parts = address.split(',').map((s) => s.trim()).filter(Boolean)
-  return parts.length >= 2 ? parts[parts.length - 1] : null
-}
-
 /**
  * POST /api/v1/orders
  * Called by n8n after a customer confirms an order via WhatsApp.
@@ -113,60 +110,30 @@ export async function POST(req: NextRequest) {
   try {
     const supabase = await createServiceClient()
 
-    const [{ data: products }, { data: variants }] = await Promise.all([
-      supabase.from('products').select('id, name, base_price').eq('tenant_id', tenant_id),
-      supabase.from('product_variants').select('product_id, size, color_name, price').eq('tenant_id', tenant_id),
-    ])
-
-    type RawItem = Record<string, unknown>
-
-    const verifiedItems: OrderItem[] = (items as RawItem[]).map((item) => {
-      const itemName = String(item.name ?? '').trim()
-      const itemVariant = item.variant ? String(item.variant).trim() : null
-      const quantity = Number(item.quantity ?? 0)
-      let unit_price = Number(item.unit_price ?? 0)
-      let price_unverified = true
-
-      const matchedProduct = (products ?? []).find(
-        (p: { id: string; name: string; base_price: number }) =>
-          p.name.toLowerCase() === itemName.toLowerCase()
-      )
-
-      if (matchedProduct) {
-        if (itemVariant) {
-          const matchedVariant = (variants ?? []).find(
-            (v: { product_id: string; size: string; color_name: string; price: number }) =>
-              v.product_id === matchedProduct.id &&
-              (v.size.toLowerCase() === itemVariant.toLowerCase() ||
-                v.color_name.toLowerCase() === itemVariant.toLowerCase())
-          )
-          unit_price = matchedVariant ? matchedVariant.price : matchedProduct.base_price
-        } else {
-          unit_price = matchedProduct.base_price
-        }
-        price_unverified = false
+    let verifiedItems
+    try {
+      verifiedItems = await resolveOrderItems(supabase, tenant_id, items as Record<string, unknown>[])
+    } catch (err) {
+      if (err instanceof UnknownItemError) {
+        return NextResponse.json({ error: 'unknown_item', name: err.itemName }, { status: 422 })
       }
-
-      const line_total = quantity * unit_price
-      return {
-        name: itemName,
-        ...(itemVariant ? { variant: itemVariant } : {}),
-        quantity,
-        unit_price,
-        line_total,
-        ...(price_unverified ? { price_unverified: true } : {}),
-      }
-    })
+      throw err
+    }
 
     const subtotal = verifiedItems.reduce((s, i) => s + i.line_total, 0)
 
     // Delivery fee resolved server-side from zones, body value ignored
-    const city = (typeof bodyCity === 'string' ? bodyCity : null) ?? cityFromAddress(delivery_address)
-    const zone = city ? await lookupZoneByCity(tenant_id, city) : null
-    const delivery_fee = zone?.fee ?? 0
+    const trimmedAddress = delivery_address.trim()
+    const cityHint = typeof bodyCity === 'string' ? bodyCity : null
+    const { fee: delivery_fee, district, estimated_days } = await resolveDeliveryFee(
+      tenant_id,
+      trimmedAddress,
+      cityHint
+    )
     const total = subtotal + delivery_fee
 
     const phoneStr = typeof phone === 'string' ? phone : null
+    const now = new Date().toISOString()
 
     const baseRow = {
       tenant_id,
@@ -177,16 +144,16 @@ export async function POST(req: NextRequest) {
       currency: typeof currency === 'string' ? currency : 'LKR',
       customer_name: customer_name.trim(),
       customer_phone: phoneStr,
-      delivery_address: delivery_address.trim(),
+      delivery_address: trimmedAddress,
       contact_number: typeof contact_number === 'string' ? contact_number : null,
-      delivery_zone: zone?.district ?? null,
-      estimated_days: zone?.estimated_days ?? null,
+      delivery_zone: district,
+      estimated_days,
       items: verifiedItems,
       payment_method: normalizePaymentMethod(payment_method as string),
       subtotal,
       delivery_fee,
       total,
-      updated_at: new Date().toISOString(),
+      updated_at: now,
     }
 
     const initialStatus = isBankTransfer(payment_method as string) ? 'awaiting_payment' : 'pending'
@@ -199,23 +166,31 @@ export async function POST(req: NextRequest) {
       if (open) {
         const { data, error } = await supabase
           .from('orders')
-          .update({ ...baseRow, status: initialStatus })
+          .update({ ...baseRow, status: initialStatus, status_changed_at: now })
           .eq('id', open.id)
           .in('status', DRAFT_STATUSES)
-          .select('order_ref')
+          .select(ORDER_SNAPSHOT_COLUMNS)
           .maybeSingle()
         if (error) return NextResponse.json({ error: 'Failed to update order' }, { status: 500 })
         if (!data) return NextResponse.json({ error: 'order_locked' }, { status: 409 })
-        if (phoneStr) await upsertCustomerFromOrder(tenant_id, phoneStr, customer_name.trim(), baseRow.language)
-        return NextResponse.json({ order_id: data.order_ref, mode: 'updated', subtotal, delivery_fee, total })
+        await upsertCustomerFromOrder(tenant_id, phoneStr, customer_name.trim(), baseRow.language)
+        revalidatePath('/orders')
+        return NextResponse.json({
+          order_id: data.order_ref,
+          mode: 'updated',
+          subtotal,
+          delivery_fee,
+          total,
+          order: toOrderSnapshot(data),
+        })
       }
     }
 
     // No draft — insert. Catch the partial-unique race.
     const { data: ins, error: insErr } = await supabase
       .from('orders')
-      .insert({ ...baseRow, status: initialStatus, created_at: new Date().toISOString() })
-      .select('order_ref')
+      .insert({ ...baseRow, status: initialStatus, status_changed_at: now, created_at: now })
+      .select(ORDER_SNAPSHOT_COLUMNS)
       .single()
 
     if (insErr?.code === '23505' && phoneStr) {
@@ -223,14 +198,22 @@ export async function POST(req: NextRequest) {
       if (again) {
         const { data } = await supabase
           .from('orders')
-          .update({ ...baseRow, status: initialStatus })
+          .update({ ...baseRow, status: initialStatus, status_changed_at: now })
           .eq('id', again.id)
           .in('status', DRAFT_STATUSES)
-          .select('order_ref')
+          .select(ORDER_SNAPSHOT_COLUMNS)
           .maybeSingle()
         if (data) {
-          if (phoneStr) await upsertCustomerFromOrder(tenant_id, phoneStr, customer_name.trim(), baseRow.language)
-          return NextResponse.json({ order_id: data.order_ref, mode: 'updated', subtotal, delivery_fee, total })
+          await upsertCustomerFromOrder(tenant_id, phoneStr, customer_name.trim(), baseRow.language)
+          revalidatePath('/orders')
+          return NextResponse.json({
+            order_id: data.order_ref,
+            mode: 'updated',
+            subtotal,
+            delivery_fee,
+            total,
+            order: toOrderSnapshot(data),
+          })
         }
       }
       return NextResponse.json({ error: 'order_locked' }, { status: 409 })
@@ -238,7 +221,15 @@ export async function POST(req: NextRequest) {
     if (insErr) return NextResponse.json({ error: 'Failed to create order' }, { status: 500 })
 
     if (phoneStr) await upsertCustomerFromOrder(tenant_id, phoneStr, customer_name.trim(), baseRow.language)
-    return NextResponse.json({ order_id: ins.order_ref, mode: 'created', subtotal, delivery_fee, total })
+    revalidatePath('/orders')
+    return NextResponse.json({
+      order_id: ins.order_ref,
+      mode: 'created',
+      subtotal,
+      delivery_fee,
+      total,
+      order: toOrderSnapshot(ins),
+    })
   } catch (err) {
     console.error('[POST /api/v1/orders]', err)
     return NextResponse.json(
@@ -327,6 +318,9 @@ export async function PATCH(req: NextRequest) {
     }
 
     notifyOrderStatusChange(order, previousStatus)
+
+    revalidatePath('/orders')
+    revalidatePath('/payments')
 
     return NextResponse.json({
       order_id: order.order_ref,

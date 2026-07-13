@@ -1,0 +1,3752 @@
+{
+  "name": "FlowBot — WhatsApp Handler v6.9.3 (Order Edit Fix)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "whatsapp",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "id": "c9cf7fc3-7c37-42ff-bd44-27e54c20c9ca",
+      "name": "Webhook — WhatsApp",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        36016,
+        35168
+      ],
+      "webhookId": "flowbot-whatsapp-webhook"
+    },
+    {
+      "parameters": {
+        "path": "whatsapp",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "4480d2ac-c537-4eda-8868-ae493bb8d484",
+      "name": "Webhook — WhatsApp Verify",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        36016,
+        35360
+      ],
+      "webhookId": "flowbot-whatsapp-verify"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Handle Meta webhook verification (GET)\nconst query = $input.first().json.query || {};\nconst verifyToken = 'flowbot_verify_token'; // must match what you set in Meta portal\n\nif (query['hub.mode'] === 'subscribe' && query['hub.verify_token'] === verifyToken) {\n  return [{ json: { challenge: query['hub.challenge'] } }];\n}\n\nreturn [{ json: { error: 'Invalid verify token' } }];"
+      },
+      "id": "87d091e9-3ae7-4361-8a3c-1b92a80158f6",
+      "name": "Code — Handle Verification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        36288,
+        35360
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.challenge }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "9ba7da92-2251-4e37-93b9-5fe639fd29b1",
+      "name": "Respond — Challenge",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        36544,
+        35360
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || $input.first().json;\n\n// ── Signature verification (recommended in production) ──\n// const crypto = require('crypto');\n// const appSecret = process.env.WA_APP_SECRET || '';\n// const signature = $input.first().json.headers?.['x-hub-signature-256'] || '';\n// const expected = 'sha256=' + crypto.createHmac('sha256', appSecret).update(JSON.stringify(body)).digest('hex');\n// if (appSecret && signature !== expected) throw new Error('Invalid signature');\n\n// ── Parse WhatsApp payload ──────────────────────────────\nconst entry  = body.entry?.[0];\nconst change = entry?.changes?.[0];\nconst value  = change?.value;\n\n// Ignore non-message webhooks (status updates, etc)\nif (!value?.messages) {\n  return [{ json: { skip: true, reason: 'No message in payload' } }];\n}\n\nconst message       = value.messages[0];\nconst phoneNumberId = value.metadata?.phone_number_id;\nconst from          = message.from;        // customer's phone number\nconst messageType   = message.type;\nconst messageId     = message.id;\n\nif (!phoneNumberId) {\n  throw new Error('No phone_number_id in payload — cannot route to tenant');\n}\n\nconst baseOut = {\n  from,\n  phoneNumberId,\n  messageId,\n  sessionId:     from,        // use customer phone as session ID\n  channel:       'whatsapp',\n  timestamp:     new Date().toISOString(),\n  // media defaults (text path leaves these untouched)\n  isImageSearch: false,\n  hasMedia:      false,\n  mediaKind:     null,\n  mediaId:       null,\n  mediaMime:     null,\n  mediaFilename: null\n};\n\n// ── TEXT message ────────────────────────────────────────\nif (messageType === 'text') {\n  const text = message.text?.body || '';\n  if (!text.trim()) return [{ json: { skip: true, reason: 'Empty message' } }];\n  return [{ json: { ...baseOut, rawMessage: text } }];\n}\n\n// ── IMAGE message → product IMAGE SEARCH ────────────────\n// WhatsApp delivers images as jpeg / png / webp. We accept any image/* and\n// default the mime to jpeg so low-quality / odd uploads are handled gracefully.\nif (messageType === 'image') {\n  const img  = message.image || {};\n  const mime = (img.mime_type || 'image/jpeg').toLowerCase();\n  if (img.id) {\n    return [{ json: {\n      ...baseOut,\n      rawMessage:    (img.caption || '').trim(), // caption is an extra text hint (may be empty)\n      isImageSearch: true,\n      hasMedia:      true,\n      mediaKind:     'image',\n      mediaId:       img.id,\n      mediaMime:     mime\n    } }];\n  }\n  return [{ json: { skip: true, reason: 'Image message without media id', phoneNumberId, from } }];\n}\n\n// ── DOCUMENT message (PDF payment slip etc.) ────────────\nif (messageType === 'document') {\n  const doc  = message.document || {};\n  const mime = (doc.mime_type || 'application/pdf').toLowerCase();\n  if (doc.id) {\n    return [{ json: {\n      ...baseOut,\n      rawMessage:    (doc.caption || doc.filename || '').trim(),\n      isImageSearch: false,\n      hasMedia:      true,\n      mediaKind:     'document',\n      mediaId:       doc.id,\n      mediaMime:     mime,\n      mediaFilename: doc.filename || null\n    } }];\n  }\n  return [{ json: { skip: true, reason: 'Document message without media id', phoneNumberId, from } }];\n}\n\n// ── Any other type (audio / video / sticker / location …) ──\nreturn [{ json: { skip: true, reason: `Unsupported message type: ${messageType}`, phoneNumberId, from } }];\n"
+      },
+      "id": "0cfe26e4-d571-45d9-aa33-bbb8ddc41587",
+      "name": "Code — Parse WA Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        36288,
+        35168
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.skip }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a942324b-44d9-452c-b308-d87a59d972df",
+      "name": "IF — Skip?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        36544,
+        35168
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={ \"ok\": true }",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "74ce3ef7-05e4-4339-8d31-3db75934ba76",
+      "name": "Respond — Skip 200",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        36784,
+        34960
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://flowbot-steel.vercel.app/api/v1/tenant-by-phone?phone_number_id={{ $json.phoneNumberId }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "flowbot_n8n_dev_key_8f3a1c9d2b7e4f60a1c3d5e7f9b1a3c5"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "3355eb3d-b1e4-496e-acaa-79ad45a7cad5",
+      "name": "HTTP — Get Tenant by Phone ID",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        36784,
+        35168
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const parsed    = $('Code — Parse WA Message').first().json;\nconst tenantRes = $('HTTP — Get Tenant by Phone ID').first().json;\n\nif (!tenantRes.tenant) {\n  throw new Error(`No tenant found for phone_number_id: ${parsed.phoneNumberId}`);\n}\nconst tenant = tenantRes.tenant;\nconst msg = (parsed.rawMessage || '').toLowerCase();\n\n// ── Language rules + system base ────────────────────────────────────\nconst langRules = {\n  SI: 'Reply ONLY in Sinhala script (Unicode). Do not use English.',\n  TA: 'Reply ONLY in Tamil script (Unicode). Do not use English.',\n  SL: 'Reply ONLY in Singlish — Sinhala words written in English letters. Do NOT use Sinhala Unicode.',\n  EN: 'Reply in English.'\n};\nconst systemBase = tenant.system_prompt ||\n  `You are ${tenant.bot_name || 'FlowBot'}, a friendly AI assistant for ${tenant.business_name}. Sound natural and human. Keep replies concise. Never say you are an AI unless directly asked.`;\n\n// ── Helpers (used for the LLM query + the slim fallback) ────────────\nconst STOPWORDS = new Set(['the','a','an','is','are','do','you','have','any','show','me','please','can','i','want',\n  'to','of','for','with','and','or','in','on','my','your','this','that','it','what','whats','need','looking','look',\n  'some','give','send','see','got','pls','plz','hi','hello','hey','there','about','tell','will','would','could','get',\n  'find','search','all','products','product','items','item','catalog','catalogue','collection','everything','stuff',\n  'range','list','ones','things','thing','available','ur','u','wanna','gimme','lemme','wat','wats',\n  'image','images','photo','photos','picture','pictures','pic','pics','asking','ask']);\nfunction tokenize(s) {\n  return (s || '').toLowerCase().replace(/[^a-z0-9\\s-]/g, ' ').split(/\\s+/)\n    .filter(w => w.length >= 2 && !STOPWORDS.has(w));\n}\nfunction parsePriceRange(text) {\n  const t = (text || '').replace(/,/g, '').toLowerCase();\n  let m;\n  if ((m = t.match(/(?:between|from)\\s*(?:rs\\.?|lkr)?\\s*(\\d{2,7})\\s*(?:and|to|-|–|—)\\s*(?:rs\\.?|lkr)?\\s*(\\d{2,7})/))) return { min: +m[1], max: +m[2] };\n  if ((m = t.match(/(?:under|below|less than|cheaper than|max|upto|up to|within|no more than)\\s*(?:rs\\.?|lkr)?\\s*(\\d{2,7})/))) return { min: null, max: +m[1] };\n  if ((m = t.match(/(?:over|above|more than|min|minimum|at least|starting (?:from|at))\\s*(?:rs\\.?|lkr)?\\s*(\\d{2,7})/))) return { min: +m[1], max: null };\n  if ((m = t.match(/(?:around|about|approx\\.?|approximately|near|~)\\s*(?:rs\\.?|lkr)?\\s*(\\d{2,7})/))) { const v = +m[1]; return { min: Math.round(v*0.8), max: Math.round(v*1.2) }; }\n  return { min: null, max: null };\n}\nconst sriLankaCities = ['colombo','kandy','galle','jaffna','negombo','matara','kurunegala','anuradhapura','polonnaruwa',\n  'badulla','nuwara eliya','ratnapura','batticaloa','trincomalee','vavuniya','puttalam','chilaw','horana','panadura',\n  'moratuwa','dehiwala','maharagama','nugegoda','kaduwela','malabe','rajagiriya','kelaniya','wattala','gampaha',\n  'kiribathgoda','weligama','ambalangoda','hikkaduwa','tangalle','hambantota','embilipitiya','dambulla'];\nfunction titleCase(s) { return String(s || '').split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' '); }\nconst COLORS = ['black','white','red','blue','green','yellow','pink','purple','orange','brown','grey','gray','navy',\n  'maroon','gold','silver','beige','cream','teal','olive','mustard','peach','lavender'];\n\n// ── PRIMARY: structured understanding from the LLM ──────────────────\nlet u = null;\ntry {\n  const content = $('LLM — Understand').first().json.candidates?.[0]?.content?.parts?.[0]?.text || '';\n  u = JSON.parse(content.replace(/```json|```/g, '').trim());\n} catch (e) { u = null; }\n\n// ── FALLBACK (slim safety net): only runs if the LLM call fails ─────\nlet usedFallback = false;\nif (!u || typeof u !== 'object') {\n  usedFallback = true;\n  const pr = parsePriceRange(parsed.rawMessage);\n  let fcity = null;\n  for (const c of sriLankaCities) { if (msg.includes(c)) { fcity = titleCase(c); break; } }\n  const ord    = /\\b(order|checkout|buy now|place (?:an |the )?order|confirm order|i want to buy|add to cart|i want this|take this)\\b/.test(msg);\n  const cats   = /\\b(categor(?:y|ies)|what (?:types|kinds))\\b/.test(msg);\n  const browse = /\\b(everything|all products|catalog(?:ue)?|collection|show me all|what (?:do|have) you (?:got|have|sell))\\b/.test(msg);\n  const prod   = /\\b(price|cost|how much|buy|saree|frock|dress|gown|shirt|tshirt|t-shirt|top|shoe|bag|skirt|denim|size|colou?r|stock|available|show|photo|item)\\b/.test(msg);\n  const del    = /\\b(deliver|delivery|shipping|ship|courier)\\b/.test(msg) || (!!fcity && !prod);\n  let fsize = null;\n  let sm = msg.match(/\\bsize\\s*([a-z0-9]{1,4})\\b/) || msg.match(/\\b([sml])\\s*size\\b/) || msg.match(/\\b(xs|xl|xxl|xxxl)\\b/);\n  if (sm) fsize = sm[1].toUpperCase();\n  let fcolor = null;\n  for (const c of COLORS) { if (new RegExp('\\\\b' + c + '\\\\b').test(msg)) { fcolor = c; break; } }\n  u = {\n    intent:     cats ? 'categories' : ord ? 'order' : (prod || browse) ? 'product' : del ? 'delivery' : 'general',\n    wantsImage: /\\b(photo|image|pic|see|show|send)\\b/.test(msg),\n    city:       fcity,\n    search: {\n      query:       (prod || browse) ? tokenize(parsed.rawMessage).join(' ') : '',\n      minPrice:    pr.min, maxPrice: pr.max,\n      inStockOnly: /\\b(in stock|available)\\b/.test(msg),\n      browseAll:   browse,\n      size:        fsize,\n      color:       fcolor,\n      skus:        ((parsed.rawMessage || '').match(/\\b[a-z]{1,5}[-_]?\\d{2,6}\\b/gi) || []).map(s => s.toUpperCase())\n    }\n  };\n}\n\n// ── Language: trust the LLM if valid, else fall back to script detection ──\nconst LANGMAP = { EN: 'English', SI: 'Sinhala', TA: 'Tamil', SL: 'Singlish' };\nlet langCode = String(u.language || '').toUpperCase();\nif (!LANGMAP[langCode]) {\n  if (/[\\u0D80-\\u0DFF]/.test(parsed.rawMessage || '')) langCode = 'SI';\n  else if (/[\\u0B80-\\u0BFF]/.test(parsed.rawMessage || '')) langCode = 'TA';\n  else langCode = 'EN';\n}\nconst lang = { code: langCode, label: LANGMAP[langCode] || 'English' };\n\n// ── Deterministic SAFETY NET: hard handoff on configured trigger words ──\nconst rawHandoff = tenant.handoff_words || tenant.handoff_triggers || 'speak to human,manager,call me,urgent,agent,human,real person';\nconst handoffWords = (Array.isArray(rawHandoff) ? rawHandoff : String(rawHandoff).split(','))\n  .map(w => String(w).trim().toLowerCase()).filter(Boolean);\nconst hardHandoff = handoffWords.some(w => msg.includes(w));\n\n// ── Map understanding → the flags the rest of the workflow expects ──\nconst isImageSearch  = !!parsed.isImageSearch;            // an actual uploaded photo (deterministic)\nconst llmIntent      = String(u.intent || 'general').toLowerCase();\nconst isHandoff      = hardHandoff || llmIntent === 'handoff';\nconst isCategoryQuery = llmIntent === 'categories' || /\\b(categor(?:y|ies)|what (?:types|kinds))\\b/.test(msg);\nconst detectedCity   = u.city ? titleCase(u.city) : null;\nconst isOrderIntent  = llmIntent === 'order';\nconst sObj           = u.search || {};\nconst browseAll      = (!!sObj.browseAll || llmIntent === 'browse') && !isCategoryQuery;\nconst hasQuery       = !!(sObj.query && String(sObj.query).trim()) || browseAll || (Array.isArray(sObj.skus) && sObj.skus.length > 0);\nconst effProductIntent = (isImageSearch || ['product', 'browse'].includes(llmIntent) || hasQuery) && !isCategoryQuery;\nconst isDeliveryIntent = llmIntent === 'delivery'\n  || (!!detectedCity && !['product', 'image', 'order', 'browse'].includes(llmIntent) && !effProductIntent && !isCategoryQuery);\n\nconst search = {\n  query:       sObj.query || '',\n  tokens:      tokenize(sObj.query || ''),\n  skus:        Array.isArray(sObj.skus) ? sObj.skus.map(s => String(s).toUpperCase()) : [],\n  minPrice:    (sObj.minPrice ?? null),\n  maxPrice:    (sObj.maxPrice ?? null),\n  inStockOnly: !!sObj.inStockOnly,\n  browseAll:   browseAll,\n  category:    sObj.category || null,\n  brand:       sObj.brand || null,\n  size:        sObj.size ? String(sObj.size).trim() : null,\n  color:       (sObj.color || sObj.colour) ? String(sObj.color || sObj.colour).trim() : null\n};\nconst wantsImage = (!!u.wantsImage\n  || /\\b(photo|photos|image|images|pic|pics|picture|pictures)\\b/.test(msg)\n  || /\\bshow\\b/.test(msg)) && !browseAll;\n\n// ── ORDER STATUS DETECTION (deterministic — never trust cached/assumed status) ──\nconst orderRefMatch = (parsed.rawMessage || '').match(/ORD[-\\s]?\\d{4}[-\\s]?\\d{3,}/i);\nconst orderRef = orderRefMatch\n  ? orderRefMatch[0].toUpperCase().replace(/\\s+/g, '-').replace(/-+/g, '-')\n  : '';\n// Strong status phrasing OVERRIDES the LLM even if it mislabels this as a new 'order'.\nconst strongStatus =\n  /\\border\\s+status\\b/i.test(msg) ||\n  /\\bstatus\\s+of\\s+(?:my\\s+|the\\s+)?order\\b/i.test(msg) ||\n  /\\bwhere(?:'?s| is)\\s+(?:my|the)\\s+order\\b/i.test(msg) ||\n  /\\btrack(?:ing)?\\s+(?:my\\s+|the\\s+)?order\\b/i.test(msg) ||\n  /\\bwhen\\s+will\\s+(?:my|the)\\s+order\\b/i.test(msg) ||\n  /\\b(?:has\\s+)?(?:my|the)\\s+order\\s+(?:shipped|been\\s+\\w+)\\b/i.test(msg) ||\n  /\\border\\s+update\\b/i.test(msg);\nconst softStatus = /\\bmy\\s+order\\b/i.test(msg);\nconst isOrderStatus =\n  (llmIntent === 'order_status') || !!orderRef || strongStatus || (softStatus && !isOrderIntent);\n\nconst intent = isImageSearch ? 'image_search'\n             : isOrderStatus ? 'order_status'\n             : isCategoryQuery ? 'categories'\n             : isOrderIntent ? 'order'\n             : effProductIntent ? 'product_inquiry'\n             : isDeliveryIntent ? 'delivery_inquiry'\n             : isHandoff ? 'handoff'\n             : 'general';\n\nreturn [{ json: {\n  sessionId:     parsed.from,\n  userMessage:   parsed.rawMessage,\n  from:          parsed.from,\n  phoneNumberId: parsed.phoneNumberId,\n  messageId:     parsed.messageId,\n  channel:       'whatsapp',\n  timestamp:     parsed.timestamp,\n  tenantId:      tenant.id,\n  understandTokens: ($('LLM — Understand').first().json.usageMetadata?.totalTokenCount || 0),\n  waAccessToken: tenant.wa_access_token,\n  botName:       tenant.bot_name || 'FlowBot',\n  systemBase,\n  lang:          lang.code,\n  langLabel:     lang.label,\n  langRule:      langRules[lang.code] || langRules.EN,\n  isHandoff,\n  isProductIntent: effProductIntent,\n  isDeliveryIntent,\n  isOrderIntent,\n  isCategoryQuery,\n  detectedCity,\n  intent,\n  orderRef,\n  isOrderStatus,\n  search,\n  wantsImage,\n  isImageSearch,\n  hasMedia:      parsed.hasMedia,\n  mediaKind:     parsed.mediaKind,\n  mediaId:       parsed.mediaId,\n  mediaMime:     parsed.mediaMime,\n  mediaFilename: parsed.mediaFilename,\n  understoodBy: usedFallback ? 'keyword_fallback' : 'llm'\n} }];\n"
+      },
+      "id": "b3cef8e8-06dc-48d1-b166-32457248b8b0",
+      "name": "Code — Detect Language + Route",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        37072,
+        35168
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.isHandoff }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              },
+              "id": "0527b403-cbbf-41a1-8b06-5b787c7be846"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a6f267fa-247f-4e33-b980-12516a49f63d",
+      "name": "IF — Handoff?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        37328,
+        35168
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $('Code — Detect Language + Route').first().json;\n\nconst handoffMsgs = {\n  EN: `Thank you for reaching out! A member of our team will contact you shortly. \\n\\nBusiness hours: Mon-Sat 9am-6pm`,\n  SI: `ඔබගේ පණිවිඩයට ස්තූතියි! අපගේ කණ්ඩායමේ සාමාජිකයෙකු ඉක්මනින් ඔබව සම්බන්ධ කර ගනු ඇත.`,\n  TA: `தொடர்பு கொண்டதற்கு நன்றி! எங்கள் குழு உறுப்பினர் விரைவில் தொடர்பு கொள்வார்கள்.`,\n  SL: `Thank you! Api team eka soon contact karanawa. Bohoma stutiy!`\n};\n\nreturn [{ json: {\n  ...data,\n  botReply: handoffMsgs[data.lang] || handoffMsgs.EN\n} }];"
+      },
+      "id": "fe6a1559-99ba-4587-9623-b47688eea640",
+      "name": "Code — Handoff Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        37584,
+        34960
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://flowbot-steel.vercel.app/api/v1/kb?tenant_id={{ $json.tenantId }}&language={{ $json.lang }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "flowbot_n8n_dev_key_8f3a1c9d2b7e4f60a1c3d5e7f9b1a3c5"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "802e1a9f-5e3f-4ff6-9924-f638831b6982",
+      "name": "HTTP — GET /api/v1/kb",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        37504,
+        35184
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://flowbot-steel.vercel.app/api/v1/products?tenant_id={{ $('Code — Detect Language + Route').first().json.tenantId }}&limit=50&sort=relevance{{ $('Code — Detect Language + Route').first().json.search.query ? '&q=' + encodeURIComponent($('Code — Detect Language + Route').first().json.search.query) : '' }}{{ $('Code — Detect Language + Route').first().json.search.minPrice != null ? '&min_price=' + $('Code — Detect Language + Route').first().json.search.minPrice : '' }}{{ $('Code — Detect Language + Route').first().json.search.maxPrice != null ? '&max_price=' + $('Code — Detect Language + Route').first().json.search.maxPrice : '' }}{{ $('Code — Detect Language + Route').first().json.search.inStockOnly ? '&in_stock=true' : '' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "flowbot_n8n_dev_key_8f3a1c9d2b7e4f60a1c3d5e7f9b1a3c5"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "4663353b-077a-43c0-bbac-f0d063f19f09",
+      "name": "HTTP — GET /api/v1/products",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        37472,
+        35376
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://flowbot-steel.vercel.app/api/v1/delivery?tenant_id={{ $('Code — Detect Language + Route').first().json.tenantId }}{{ $('Code — Detect Language + Route').first().json.detectedCity ? '&city=' + $('Code — Detect Language + Route').first().json.detectedCity : '' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "flowbot_n8n_dev_key_8f3a1c9d2b7e4f60a1c3d5e7f9b1a3c5"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "2c3cc1d6-fcdd-4135-8683-75c6c87ef39a",
+      "name": "HTTP — GET /api/v1/delivery",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        37424,
+        35616
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = $('Code — Detect Language + Route').first().json;\n\n// ── CHAT HISTORY ────────────────────────────────────────────────\nconst historyRes  = $('HTTP — Get Chat History').first().json;\nconst chatHistory = (historyRes.history || []).slice(-20); // last 20 messages\n// Was an order already placed/confirmed earlier in THIS conversation? (prevents\n// the model re-firing ###PLACE_ORDER### on greetings, thanks, or status questions)\nconst ORDER_DONE_MARK = /(Order ID|ඇණවුම් අංකය|ஆர்டர் எண්|order eka confirm|ORD[-\\s]?\\d{4}[-\\s]?\\d{3,}|payment slip|verifying your payment|payment reference)/i;\nconst alreadyOrdered = chatHistory.slice(-6).some(m => m.role === 'assistant' && ORDER_DONE_MARK.test(m.content || ''));\nconst userMsg     = base.userMessage.toLowerCase();\n\n// ── CURRENT ORDER STATE (live, for edit-permission decisions) ──────\nlet orderState = 'unknown';   // none | editable | locked | cancelled | unknown\nlet supportNumber = '';\nlet currentOrderRef = null;\ntry {\n  const co = $('Code — Normalize Current Order').first().json || {};\n  orderState = co.orderState || 'unknown';\n  supportNumber = (co.supportNumber || '').trim();\n  currentOrderRef = co.currentOrderRef || null;\n} catch (e) {}\n\n// normalisers\nconst normWords = s => (s || '').toLowerCase().replace(/[^a-z0-9\\s]/g, ' ').replace(/\\s+/g, ' ').trim();\nconst normTight = s => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');\n\n// ── DYNAMIC CONFIG (from /api/v1/n8n/webhook get_config) ─────────\nlet chatbotSettings = {};\ntry { chatbotSettings = $('HTTP — n8n get_config').first().json.chatbot_settings || {}; } catch (e) {}\nconst fallbackMsg = chatbotSettings.fallback_message\n  || 'No specific info available. Tell the customer to contact the team directly.';\n\n// ── KB CONTEXT ──────────────────────────────────────────\nconst entries = $('HTTP — GET /api/v1/kb').first().json.entries || [];\nlet bestMatch = null, bestScore = 0;\nfor (const entry of entries) {\n  const keywords = Array.isArray(entry.keywords)\n    ? entry.keywords.map(k => k.toLowerCase())\n    : (entry.keywords || '').toLowerCase().split(',').map(k => k.trim());\n  const question = (entry.question || '').toLowerCase();\n  const category = (entry.category || '').toLowerCase();\n  const answer   = (entry.answer   || '').toLowerCase();\n  let score = 0;\n  for (const kw of keywords) { if (kw && userMsg.includes(kw)) score += 3; }\n  const userWords = userMsg.split(/\\s+/).filter(w => w.length > 2);\n  for (const word of userWords) {\n    if (question.includes(word)) score += 2;\n    if (category.includes(word)) score += 1;\n    if (answer.includes(word))   score += 1;\n  }\n  if (score > bestScore) { bestScore = score; bestMatch = entry; }\n}\nlet kbContext = '';\nif (bestMatch && bestScore >= 2) {\n  kbContext = `RELEVANT FAQ:\\nCategory: ${bestMatch.category}\\nQ: ${bestMatch.question}\\nA: ${bestMatch.answer}`;\n} else if (entries.length > 0) {\n  const top = entries.slice(0, 10).map(e => `[${e.category}] ${e.question} → ${e.answer}`).join('\\n');\n  kbContext = `COMPANY FAQ:\\n${top}`;\n}\n\n// ══════════════════════════════════════════════════════════════════\n//  PRODUCT SEARCH ENGINE  (text + image, typo-tolerant, ranked)\n// ══════════════════════════════════════════════════════════════════\n\n// Damerau–Levenshtein distance (typo tolerance)\nfunction dlDistance(a, b) {\n  a = a || ''; b = b || '';\n  const al = a.length, bl = b.length;\n  if (!al) return bl; if (!bl) return al;\n  const d = Array.from({ length: al + 1 }, () => new Array(bl + 1).fill(0));\n  for (let i = 0; i <= al; i++) d[i][0] = i;\n  for (let j = 0; j <= bl; j++) d[0][j] = j;\n  for (let i = 1; i <= al; i++) {\n    for (let j = 1; j <= bl; j++) {\n      const cost = a[i - 1] === b[j - 1] ? 0 : 1;\n      d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + cost);\n      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1])\n        d[i][j] = Math.min(d[i][j], d[i - 2][j - 2] + 1);\n    }\n  }\n  return d[al][bl];\n}\n\n// fuzzy match of one query token against one normalised field\nfunction fuzzyHit(token, fieldWords, fieldTight) {\n  if (!token) return 0;\n  if (fieldWords === token || (' ' + fieldWords + ' ').includes(' ' + token + ' ')) return 1;   // exact word\n  if (fieldTight && fieldTight.includes(normTight(token))) return 0.95;                          // hyphen/partial\n  for (const fw of fieldWords.split(' ')) {\n    if (!fw) continue;\n    if (fw.startsWith(token) || token.startsWith(fw)) return 0.9;                                // prefix\n    const maxd = token.length <= 4 ? 1 : 2;\n    if (Math.abs(fw.length - token.length) <= maxd && dlDistance(token, fw) <= maxd) return 0.8; // typo\n  }\n  return 0;\n}\n\n// light synonym expansion (extendable)\nconst SYN = {\n  tshirt: ['tee', 'tshirt', 'shirt'], frock: ['dress', 'dresses', 'gown', 'gowns', 'frock', 'frocks'], saree: ['sari', 'saree', 'sarees'],\n  trouser: ['pant', 'pants', 'trousers'], shoe: ['shoes', 'footwear', 'sneaker', 'sneakers'],\n  kid: ['child', 'children', 'kids'], men: ['mens', 'man', 'gents', 'gent'],\n  women: ['womens', 'woman', 'ladies', 'lady'], cheap: ['budget', 'affordable']\n};\nfunction expandTokens(tokens) {\n  const out = new Set(tokens.map(t => t.replace(/[^a-z0-9]/g, '')));\n  for (const t of tokens) {\n    for (const [k, vs] of Object.entries(SYN)) {\n      if (k === t || vs.includes(t)) { out.add(k); vs.forEach(v => out.add(v.replace(/[^a-z0-9]/g, ''))); }\n    }\n  }\n  return [...out].filter(Boolean);\n}\n\nconst FIELD_W = { name: 5, sku: 6, brand: 3, keywords: 3, category: 2, description: 1 };\n\nfunction buildFields(p) {\n  const kw = Array.isArray(p.keywords) ? p.keywords.join(' ')\n           : Array.isArray(p.tags)     ? p.tags.join(' ')\n           : (p.keywords || p.tags || '');\n  const raw = {\n    name: p.name || '', sku: p.sku || '', brand: p.brand || '',\n    keywords: kw, category: p.category || '', description: p.description || ''\n  };\n  const words = {}, tight = {};\n  for (const k in raw) { words[k] = normWords(raw[k]); tight[k] = normTight(raw[k]); }\n  return { words, tight };\n}\n\nfunction scoreProduct(fields, qTokens) {\n  let score = 0, matched = 0;\n  for (const t of qTokens) {\n    let best = 0;\n    for (const [f, w] of Object.entries(FIELD_W)) {\n      const hit = fuzzyHit(t, fields.words[f], fields.tight[f]);\n      if (hit > 0) best = Math.max(best, hit * w);\n    }\n    if (best > 0) matched++;\n    score += best;\n  }\n  if (qTokens.length) score *= (0.6 + 0.4 * (matched / qTokens.length)); // coverage bonus\n  return score;\n}\n\nfunction priceOf(p) {\n  if (p.base_price != null) return Number(p.base_price) || 0;\n  const vs = p.variants || [];\n  const prices = vs.map(v => Number(v.price) || 0).filter(Boolean);\n  return prices.length ? Math.min(...prices) : 0;\n}\nfunction inStockOf(p) {\n  const vs = p.variants || [];\n  return vs.length ? vs.some(v => (v.stock || 0) > 0) : (p.stock || 0) > 0;\n}\nfunction passFilters(p, s) {\n  const price = priceOf(p);\n  if (s.minPrice != null && price < s.minPrice) return false;\n  if (s.maxPrice != null && price > s.maxPrice) return false;\n  if (s.inStockOnly && !inStockOf(p)) return false;\n  return true;\n}\n\n// render the price/variant line (NEVER reveals quantities)\nfunction stockLine(p) {\n  const vs = p.variants || [];\n  if (vs.length) {\n    const inStock = vs.filter(v => (v.stock || 0) > 0);\n    if (!inStock.length) return 'Out of stock';\n    return inStock.map(v => {\n      const label = `${v.size || ''}${v.size && (v.color_name || v.colour_name) ? '/' : ''}${v.color_name || v.colour_name || ''}`;\n      return `${label}: LKR ${(v.price || p.base_price || 0).toLocaleString()}`;\n    }).join(', ');\n  }\n  return (p.stock || 0) > 0 ? `LKR ${(p.base_price || 0).toLocaleString()}` : 'Out of stock';\n}\n\n// ── VARIANT MATCHING (size / colour) ──\nconst _nc = s => String(s || '').toLowerCase().trim();\nfunction variantMatches(v, size, color) {\n  if (size  && _nc(v.size) !== _nc(size)) return false;\n  if (color) {\n    const cv = _nc(v.color_name || v.colour_name);\n    if (!cv.includes(_nc(color)) && !_nc(color).includes(cv)) return false;\n  }\n  return true;\n}\nfunction bestVariant(p, size, color) {\n  const vs = p.variants || [];\n  const cands = vs.filter(v => variantMatches(v, size, color));\n  const inStock = cands.filter(v => (v.stock || 0) > 0);\n  if (inStock.length) return { v: inStock[0], inStock: true,  matched: true };\n  if (cands.length)   return { v: cands[0],   inStock: false, matched: true };\n  return { v: null, inStock: false, matched: false };\n}\nfunction variantLine(p, size, color) {\n  const bv = bestVariant(p, size, color);\n  if (bv.v && bv.matched) {\n    const label = [bv.v.size, bv.v.color_name || bv.v.colour_name].filter(Boolean).join(' / ');\n    return bv.inStock\n      ? `${label} — LKR ${(bv.v.price || p.base_price || 0).toLocaleString()}`\n      : `${label} — out of stock`;\n  }\n  return stockLine(p);\n}\n\n// ── Gather the catalog (already fetched, optionally pre-filtered server-side) ──\nconst products = $('HTTP — GET /api/v1/products').first().json.products || [];\n\n// image-search results (always present — inert on the text path)\nlet imgRes = { isImageSearch: false, matches: [], visionKeywords: [], unavailable: false };\ntry { imgRes = $('Code — Image Search Results').first().json || imgRes; } catch (e) {}\n\nlet productContext   = '';\nlet pendingImageUrl  = null;     // decided in code, NOT by the LLM\nlet pendingImageCaption = '';\nlet searchResults    = [];       // ranked, for analytics / downstream\nlet searchMode       = 'none';\nlet noMatch          = false;\nlet stockAsk         = false;    // customer asked about availability alongside a photo\nlet topMatchOOS      = false;    // the closest visual match is out of stock\nlet isBrowse         = false;    // \"show me everything\" — list the catalogue\nlet wantSize         = null;     // requested size (e.g. M)\nlet wantColor        = null;     // requested colour\nlet sizeColorOOS     = false;    // asked size/colour exists but is out of stock\nlet sizeNotCarried   = false;    // we have the item but not that size/colour\n\nconst wantsImage = (base.wantsImage != null) ? !!base.wantsImage\n  : ['photo', 'image', 'picture', 'pic', 'see', 'show', 'send'].some(w => userMsg.includes(w));\n\nif (base.isImageSearch || base.isProductIntent || base.isOrderIntent) {\n\n  let ranked = [];   // [{ p, score, sim }]\n\n  // ───────────── IMAGE SEARCH (+ caption refinement) ─────────────\n  if (base.isImageSearch) {\n    searchMode = 'image';\n    const s = base.search || { tokens: [], skus: [] };\n    const capTokens = expandTokens(s.tokens || []);   // words typed alongside the photo\n\n    const byId   = {}; products.forEach(p => { if (p.id != null) byId[String(p.id)] = p; });\n    const byName = {}; products.forEach(p => { byName[normTight(p.name)] = p; });\n\n    if (imgRes.matches && imgRes.matches.length) {\n      // visual-similarity endpoint hit → enrich each match with live catalog price/stock\n      ranked = imgRes.matches.map(m => {\n        const p = byId[String(m.product_id)] || byName[normTight(m.name)]\n                || { name: m.name, image_urls: m.image_url ? [m.image_url] : [], _unresolved: true };\n        return { p, score: m.similarity_score, sim: m.similarity_score };\n      });\n    }\n    // STRICT: no vision-keyword fuzzy fallback. If embeddings returned nothing\n    // confident, \"ranked\" stays empty and we tell the customer we don't stock it.\n\n    // Caption words (e.g. \"in red\", \"size M\") nudge the visual ranking — they\n    // refine WHICH visual match, they don't replace the photo signal.\n    if (capTokens.length) {\n      ranked = ranked.map(x => {\n        const bonus = x.p._unresolved ? 0 : scoreProduct(buildFields(x.p), capTokens);\n        return { ...x, score: (x.score || 0) + bonus * 0.5 };\n      });\n    }\n\n    // Price asked alongside the photo → keep only in-range matches (if any survive).\n    if (s.minPrice != null || s.maxPrice != null) {\n      const inRange = ranked.filter(x => x.p._unresolved\n        || passFilters(x.p, { minPrice: s.minPrice, maxPrice: s.maxPrice }));\n      if (inRange.length) ranked = inRange;\n    }\n\n    // \"Is this in stock?\" → keep the exact match first (so the customer sees the\n    // item they asked about + its status); flag when that closest match is OOS so\n    // the bot can offer a similar in-stock alternative.\n    if (s.inStockOnly) {\n      stockAsk = true;\n      const topVisual = ranked.slice().sort((a, b) => (b.score || 0) - (a.score || 0))[0];\n      topMatchOOS = topVisual ? !inStockOf(topVisual.p) : false;\n    }\n\n    ranked.sort((a, b) => (b.score || 0) - (a.score || 0));\n  }\n\n  // ───────────── TEXT SEARCH ─────────────\n  if (!base.isImageSearch) {\n    searchMode = 'text';\n    const s = base.search || { tokens: [], skus: [] };\n    const qTokens = expandTokens(s.tokens || []);\n    const wantsAll = !!s.browseAll;\n    const hasQuery = !wantsAll && (qTokens.length > 0 || (s.skus || []).length > 0);\n    isBrowse = wantsAll || !hasQuery;   // \"see all products\" / no specific keyword → browse the catalogue\n\n    // hard filters (price / availability); relax if they empty the catalog\n    let filtered = products.filter(p => passFilters(p, s));\n    if (filtered.length === 0 && (s.minPrice != null || s.maxPrice != null || s.inStockOnly)) filtered = products;\n\n    const skuSet = new Set((s.skus || []).map(x => x.toLowerCase()));\n    const scored = filtered.map(p => {\n      const f = buildFields(p);\n      let sc = scoreProduct(f, qTokens);\n      if (skuSet.has(String(p.sku || '').toLowerCase())) sc += 20; // exact SKU wins\n      return { p, score: sc, sim: null };\n    }).sort((a, b) => (b.score - a.score) || (inStockOf(b.p) - inStockOf(a.p)) || (priceOf(a.p) - priceOf(b.p)));\n\n    ranked = hasQuery ? scored.filter(x => x.score > 0) : scored; // browse → whole (filtered) catalogue\n \n    // size / colour refinement — keep products that actually carry the variant\n    wantSize  = (base.search && base.search.size)  ? String(base.search.size).trim()  : null;\n    wantColor = (base.search && base.search.color) ? String(base.search.color).trim() : null;\n    if ((wantSize || wantColor) && ranked.length) {\n      const tagged = ranked.map(x => ({ x, bv: bestVariant(x.p, wantSize, wantColor) }));\n      const inStock = tagged.filter(t => t.bv.matched && t.bv.inStock);\n      const oos     = tagged.filter(t => t.bv.matched && !t.bv.inStock);\n      if (inStock.length)    { ranked = inStock.map(t => t.x); }\n      else if (oos.length)   { ranked = oos.map(t => t.x); sizeColorOOS = true; }\n      else                   { sizeNotCarried = true; } // matched the item, not that size/colour\n    }\n  }\n\n  // ───────────── RENDER ─────────────\n  const top = ranked.slice(0, isBrowse ? 8 : 5);\n  searchResults = top.map(x => ({\n    name: x.p.name, price: priceOf(x.p), in_stock: inStockOf(x.p),\n    score: Math.round((x.score || 0) * 100) / 100,\n    similarity: x.sim != null ? Math.round(x.sim * 1000) / 1000 : null\n  }));\n\n  if (top.length === 0) {\n    noMatch = true;\n    if (searchMode === 'image') {\n      productContext = imgRes.unavailable\n        ? `IMAGE SEARCH FAILED (system/quality issue): We could not process this photo. Politely apologise and ask the customer to resend a clear, well-lit photo of the single item, or to type the product name. Do NOT say whether we stock it — we could not check.`\n        : `IMAGE SEARCH — NO MATCH: This photo does NOT match any product we sell.\nSTRICT RULES (no guessing):\n- Tell the customer plainly and politely that we do NOT have this product and don't sell anything like it.\n- Do NOT show, name, suggest, describe, or price ANY product. Do NOT offer \"similar\" or \"related\" items.\n- Do NOT guess what the item might be. Do NOT invent products, prices, or availability.\n- You may briefly invite them to type a product name or ask what we sell — nothing more.`;\n    } else {\n      const asked = (base.search && base.search.query) ? base.search.query : base.userMessage;\n      productContext = `PRODUCT SEARCH: We do NOT stock \"${asked}\". Nothing in the catalogue matches it.\nRULES:\n- Tell the customer plainly and politely that we don't have \"${asked}\".\n- Do NOT say we have it, do NOT offer its price, and do NOT take an order for it.\n- Do NOT switch to a different product and present it as if it were the one they asked for.\n- You may offer to show the kinds of items we DO sell (by category), but never invent items.\n- Never invent products, prices, or availability — even if the customer insists.`;\n    }\n  } else {\n    const lines = top.map(x => {\n      const tag = x.sim != null ? ` (match ${Math.round(x.sim * 100)}%)` : '';\n      const priceInfo = (wantSize || wantColor) ? variantLine(x.p, wantSize, wantColor) : stockLine(x.p);\n      return `• ${x.p.name}${tag}: ${priceInfo}`;\n    }).join('\\n');\n    const heading = searchMode === 'image'\n      ? `MATCHED PRODUCT(S) FROM OUR CATALOGUE (the customer's photo matches these — present the best one as the item):`\n      : isBrowse\n        ? `OUR PRODUCTS (showing a selection — ask for a type, colour or budget to see more):`\n        : `AVAILABLE PRODUCTS (most relevant first):`;\n    productContext = `${heading}\\n${lines}\\n\\nRULES:\\n- Only mention products listed.\\n- NEVER tell the customer how many units are in stock. Do not mention quantities or numbers of items left.\\n- Only say a product is \"out of stock\" when it is marked Out of stock above.\\n- Do NOT write any image URLs, links, or \"Image:\" lines — the system attaches the photo automatically.`;\n\n    if (sizeColorOOS) {\n      productContext += `\\n- The exact size/colour the customer asked for is currently OUT OF STOCK. Tell them gently and offer the closest available size or colour from the list.`;\n    } else if (sizeNotCarried) {\n      productContext += `\\n- We have this item, but NOT in the exact size/colour the customer asked for. Say so kindly and tell them which sizes/colours ARE available from the list above.`;\n    }\n\n    if (isBrowse) {\n      const cats = [...new Set(products.map(p => p.category).filter(Boolean))].slice(0, 12);\n      if (cats.length) productContext += `\\n- We also sell these types of items: ${cats.join(', ')}. Mention them naturally in everyday words (not as a keyword list) and invite the customer to say what they're looking for.`;\n    }\n\n    // The customer wants to SEE a product — keep the bot from prematurely taking an order.\n    if (wantsImage && !base.isOrderIntent && searchMode === 'text' && !isBrowse) {\n      productContext += `\\n- The customer wants to SEE this product, not necessarily buy it. Show the item and its price. Do NOT ask for name, address or payment unless they say they want to order.`;\n    }\n\n    if (base.isImageSearch && stockAsk) {\n      productContext += topMatchOOS\n        ? `\\n- The customer asked if the item in the photo is available. The closest visual match is OUT OF STOCK — say so plainly, then offer the most similar IN-STOCK option from the list above (if any).`\n        : `\\n- The customer asked if the item in the photo is available. Lead your reply with a clear yes/no on the best-matching item, then give its price.`;\n    }\n\n    // Deterministic image pick: best-ranked product that actually has an image.\n    // Attach for image search or when a SPECIFIC item was asked to be shown —\n    // never for a broad \"show me everything\" browse (no single item is meant).\n    if ((base.isImageSearch || wantsImage) && !isBrowse) {\n      const pool = top.map(x => x.p);\n      let chosen = null;\n      if (base.isImageSearch && stockAsk && topMatchOOS) {\n        chosen = pool.find(p => inStockOf(p) && (p.image_urls || [])[0]) || null; // show what they can buy\n      }\n      if (!chosen) chosen = pool.find(p => (p.image_urls || [])[0]) || null;\n      if (chosen) { pendingImageUrl = (chosen.image_urls || [])[0]; pendingImageCaption = chosen.name; }\n      else if (wantsImage) {\n        // matched a product, but no photo on file — don't imply the item doesn't exist\n        productContext += `\\n- No photo is on file for the matched item(s). Share the name and price, and apologise that a photo isn't available. Do NOT say the product itself is unavailable.`;\n      }\n    }\n  }\n}\n\n// ── FOLLOW-UP \"send me a photo\" (no fresh product match this turn) ──────────\n// If the customer asks to see a photo on its own (\"can u send a image\"), attach\n// the photo of the most recent product we showed them in this conversation.\n// Without this, a two-step flow (\"looking for a frock\" -> \"send a photo\")\n// attaches nothing and the model wrongly claims it can't send images.\nif (wantsImage && !pendingImageUrl && !isBrowse && !base.isImageSearch && !base.isDeliveryIntent && !base.isCategoryQuery) {\n  const recentAssistant = chatHistory.filter(m => m.role === 'assistant').slice(-6).reverse();\n  const namedWithPhoto = [...products]\n    .filter(p => (p.image_urls || [])[0])\n    .sort((a, b) => (b.name || '').length - (a.name || '').length);  // longest name wins\n  let recalled = null;\n  for (const msg of recentAssistant) {\n    const txt = normWords(msg.content);\n    recalled = namedWithPhoto.find(p => p.name && txt.includes(normWords(p.name)));\n    if (recalled) break;\n  }\n  if (recalled) {\n    pendingImageUrl = (recalled.image_urls || [])[0];\n    pendingImageCaption = recalled.name;\n    productContext += `\\n\\nThe customer asked to see a photo of the ${recalled.name}. Its photo IS being sent with your reply — introduce it warmly (e.g. \"Here's the ${recalled.name} :)\") and give its price. NEVER say you cannot send images.`;\n  } else {\n    productContext += `\\n\\nThe customer asked for a photo but no specific item is in context. Politely ask which product they'd like to see — do NOT say you cannot send photos.`;\n  }\n}\n\n// ── DELIVERY CONTEXT ────────────────────────────────────\nlet deliveryContext = '';\nif (base.isDeliveryIntent) {\n  const deliveryRes = $('HTTP — GET /api/v1/delivery').first().json;\n  if (base.detectedCity) {\n    const zone = deliveryRes.zone;\n    if (zone && zone.is_active) {\n      const free = zone.free_delivery_threshold > 0\n        ? ` Free delivery above LKR ${zone.free_delivery_threshold.toLocaleString()}.` : '';\n      deliveryContext = `DELIVERY TO ${base.detectedCity.toUpperCase()}:\\nFee: LKR ${zone.fee} | Time: ${zone.estimated_days} days${free}`;\n    } else {\n      deliveryContext = `DELIVERY: No zone set up for ${base.detectedCity}. Tell customer to contact us directly.`;\n    }\n  } else {\n    const zones = (deliveryRes.zones || []).filter(z => z.is_active).slice(0, 8);\n    if (zones.length > 0) {\n      const zoneLines = zones.map(z => `• ${z.district}: LKR ${z.fee} (${z.estimated_days} days)`).join('\\n');\n      deliveryContext = `DELIVERY ZONES:\\n${zoneLines}\\nTell customer to share their city for exact fee.`;\n    } else {\n      deliveryContext = 'DELIVERY: We deliver island-wide. Ask customer for their city.';\n    }\n  }\n}\n\n// ── COMBINE AND BUILD GEMINI PAYLOAD ─────────────────────\n// ── CATEGORY QUESTION (\"what do you sell / what categories\") ──\nlet categoryContext = '';\nif (base.isCategoryQuery) {\n  const cats = [...new Set(products.filter(p => p.is_active !== false).map(p => p.category).filter(Boolean))];\n  categoryContext = cats.length\n    ? `THE SHOP SELLS THESE TYPES OF ITEMS: ${cats.join(', ')}.\\nTell the customer what you have the way a warm, real shop assistant would — one short, friendly, natural sentence in their language. Do NOT list them as keywords, bullet points, or technical words. Put any technical-sounding category into everyday words a shopper uses. Then warmly ask what they are looking for.`\n    : `The shop has no categories set up yet. Warmly ask the customer what they are looking for.`;\n}\n\nlet orderStatusContext = '';\nif (base.isOrderStatus && !base.orderRef) {\n  orderStatusContext = `ORDER STATUS REQUEST (no Order ID provided): The customer is asking about an existing order but gave no Order ID. Politely ask them to share it (it looks like ORD-2026-0042). Do NOT guess, assume, or invent any status, items, total, tracking number or delivery date.`;\n}\n\nconst contextParts = [kbContext, categoryContext, productContext, deliveryContext, orderStatusContext].filter(c => c.trim());\nconst finalContext = contextParts.length > 0\n  ? contextParts.join('\\n\\n---\\n\\n') + '\\n\\nAnswer ONLY based on the above. Do not invent details. Keep replies SHORT and conversational for WhatsApp.'\n  : fallbackMsg;\n\n// ── CHAT-TO-ORDER PROTOCOL ──────────────────────────────\n// ── ORDER-EDIT PERMISSION (depends on live dashboard status) ──────\nconst supportLine = supportNumber\n  ? `ask them to contact our team on ${supportNumber} for any change.`\n  : `ask them to contact our support team directly for any change.`;\nlet editingRule;\nif (orderState === 'locked') {\n  editingRule = `EDITING A CONFIRMED ORDER: The customer's order has ALREADY BEEN CONFIRMED by our team from the dashboard. It can no longer be changed through chat. If they ask to change items, quantities, address or payment, gently tell them the order is already confirmed and ${supportLine} Do NOT collect changes, do NOT show a new summary, and do NOT output any order block.`;\n} else if (orderState === 'cancelled') {\n  editingRule = `EDITING A CANCELLED ORDER: The customer's previous order was cancelled. If they want to change or re-order, tell them the earlier order was cancelled and help them place a fresh order from scratch if they wish. Do NOT try to edit the cancelled order.`;\n} else if (orderState === 'editable') {\n  editingRule = `EDITING AN UNCONFIRMED ORDER: The customer's order is NOT yet confirmed by our team, so changes ARE allowed. If they want to change items, quantities, address or payment, collect the changes, show the updated summary and ask them to confirm again. Once they confirm, their existing order is updated on our system automatically (same order, no duplicate) — tell them warmly that their order has been updated.`;\n} else {\n  // unknown / none → keep the safe original behaviour\n  editingRule = `EDITING AN UNCONFIRMED ORDER: If the customer wants to change items, quantities, address or payment BEFORE confirming, just collect the changes, show the updated summary and ask them to confirm again. The system updates their existing pending order automatically — it will NOT create a duplicate. If they try to change an order that is already confirmed, tell them it is confirmed and can no longer be changed, and ${supportLine}`;\n}\n\nconst orderProtocolFull = `ORDER-TAKING PROTOCOL (Chat-to-Order):\nWhen the customer wants to buy or has finished choosing products, guide them to place an order.\nSTEP 1 - Collect ALL of these. Politely ask for any that are still missing (one or two at a time):\n  - Full name\n  - Delivery address (including city)\n  - Contact number\n  - Payment method (Cash on Delivery, Bank Transfer, Card Payment, or another option)\nSTEP 2 - Show a clear ORDER SUMMARY: list every product with its quantity and unit price, then the subtotal, the delivery fee (use the delivery info above for their city; if the city is unknown, ask for it), and the TOTAL. Restate the name, address and payment method.\nSTEP 3 - After you have shown the full order summary, ask the customer to confirm. A clear yes in ANY language counts as confirmation — for example: \"Confirm Order\", \"yes\", \"yeah\", \"ok\", \"okay\", \"confirm\", \"correct\", \"go ahead\", \"ha\", \"howa\", \"hari\", \"oni\", \"ඔව්\", \"හරි\", \"ஆம்\", \"சரி\". Only treat a yes as confirmation when you have JUST shown a complete order summary and are waiting for their go-ahead; if instead they want to change something, collect the change and show an updated summary.\nSTEP 4 - Do NOT place the order until the customer has clearly agreed to the summary you just showed. A clear yes in any language (see STEP 3) IS that agreement — do not keep demanding the exact words \"Confirm Order\". Never invent prices - only use prices shown above or already quoted earlier in this chat. Keep the conversation in the customer's language.\n\nDELIVERY FEE: Always take the delivery fee from the DELIVERY info above for the customer's city — never invent or estimate it. If the city is unknown, ask for it before showing a total. The dashboard records the final fee.\n${editingRule}\n\nONLY AFTER the customer has explicitly confirmed, end your message with this EXACT machine block (the customer never sees it):\n###PLACE_ORDER###\n{\"customer_name\":\"...\",\"delivery_address\":\"...\",\"contact_number\":\"...\",\"payment_method\":\"...\",\"currency\":\"LKR\",\"delivery_fee\":0,\"items\":[{\"name\":\"...\",\"variant\":\"...\",\"quantity\":1,\"unit_price\":0}]}\n###END_ORDER###\nBlock rules: valid JSON on a SINGLE line; numbers only (no currency symbols or commas); use \"\" for variant when none; put your friendly confirmation text BEFORE the block; output the block at most once; never output it before the customer confirms.`;\n\nconst orderProtocol = alreadyOrdered\n  ? `IMPORTANT — AN ORDER HAS ALREADY BEEN PLACED in this conversation. Do NOT place another order and do NOT output any ###PLACE_ORDER### block for greetings, thanks, questions, or small talk. ONLY output a new block if the customer EXPLICITLY asks to change their order (different items, quantity, address, or payment) and then confirms again — in that case re-collect the details, show the updated summary, and output exactly one block. If they ask about delivery status, tell them you'll check and ask for their Order ID. Otherwise just reply warmly in their language.`\n  : orderProtocolFull;\n\nconst systemPrompt = `${base.systemBase}\\n\\nLANGUAGE RULE: ${base.langRule}\\n\\nIMPORTANT: You are a warm, real human shop assistant chatting on WhatsApp — never sound like a bot or an AI. Write short, natural, friendly sentences the way a helpful shopkeeper texts. Do NOT dump keyword lists, bullet points, or technical words (category codes, SKUs, system terms); describe things in plain everyday words. Keep replies short, no markdown headers, emojis sparingly, never output URLs or links, and never reveal exact stock quantities. PHOTOS: When a product photo is on file, the system automatically attaches it to your reply — so NEVER tell the customer you can't send images or photos. If they ask to see an item we carry, just introduce it warmly and the photo will be sent alongside your message. GROUNDING: Only say an item is available if it appears in the product information below. If it is not listed there, tell the customer we don't have it — never claim, imply, promise, show a price for, or start an order for an item that is not listed, even if the customer says yes or insists. If the listed item is different from what they asked for, do not pretend it is the same item.\\n\\n${finalContext}\\n\\n${orderProtocol}`;\n\nconst historyMessages = chatHistory.map(m => ({\n  role:  m.role === 'assistant' ? 'model' : 'user',\n  parts: [{ text: m.content || '' }]\n}));\n\n// For image searches with no text caption, give the model an explicit instruction.\nconst effectiveUserMessage = base.isImageSearch && !base.userMessage\n  ? '[The customer sent a product photo. Use the VISUALLY SIMILAR PRODUCTS context to help them.]'\n  : base.userMessage;\n\nconst geminiPayload = {\n  systemInstruction: { role: 'system', parts: [{ text: systemPrompt }] },\n  contents: [\n    ...historyMessages,\n    { role: 'user', parts: [{ text: effectiveUserMessage }] }\n  ],\n  generationConfig: {\n    temperature:     0.4,\n    maxOutputTokens: 1200,\n    thinkingConfig:  { thinkingBudget: 512 }\n  }\n};\n\nreturn [{ json: {\n  ...base,\n  geminiPayload,\n  wantsImage,\n  pendingImageUrl,\n  pendingImageCaption,\n  searchMode,\n  searchResults,\n  alreadyOrdered,\n  noMatch,\n  orderState,\n  currentOrderRef,\n  supportNumber\n} }];"
+      },
+      "id": "c4ad6128-ff28-4f4f-b0a8-97cb6595c8aa",
+      "name": "Code — Build Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        37936,
+        35360
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.geminiPayload) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "e2e694c3-d789-4d4d-83b3-fc149950d2c4",
+      "name": "HTTP — Gemini API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        38192,
+        35360
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "name": "Gemini Header Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const ctx       = $('Code — Build Context').first().json;\nconst geminiRes = $input.first().json;\n\nconst candidate = geminiRes.candidates?.[0];\nif (geminiRes.error || !candidate) {\n  throw new Error('GEMINI_ERROR: ' + (geminiRes.error?.message || 'No candidates'));\n}\n\nlet botReply = (candidate.content?.parts || []).map(p => p.text || '').join('').trim();\n\n// Gemini can finish on MAX_TOKENS (thinking ate the budget) or safety and return\n// empty/partial text. Don't send a blank or half message — fall back cleanly.\nconst finish = candidate.finishReason || '';\nif (!botReply && (finish === 'MAX_TOKENS' || finish === 'SAFETY' || finish === 'RECITATION')) {\n  botReply = ctx.pendingImageCaption\n    || 'Sorry, could you please repeat that? 🙂';\n}\n\n\n// ── CHAT-TO-ORDER: detect the machine block ────────────────────\nlet isOrder = false;\nlet orderPayload = null;\nlet orderError = null;\nconst orderMatch = botReply.match(/###PLACE_ORDER###([\\s\\S]*?)###END_ORDER###/i);\nif (orderMatch) {\n  botReply = botReply.replace(orderMatch[0], '').trim();   // hide from customer\n  try {\n    const raw = JSON.parse(orderMatch[1].trim());\n    const items = (raw.items || []).map(it => {\n      const qty  = Number(it.quantity)   || 0;\n      const unit = Number(it.unit_price) || 0;\n      return {\n        name:       String(it.name || '').trim(),\n        variant:    String(it.variant || '').trim(),\n        quantity:   qty,\n        unit_price: unit,\n        line_total: qty * unit\n      };\n    }).filter(it => it.name && it.quantity > 0);\n    if (items.length > 0) {\n      const subtotal    = items.reduce((s, it) => s + it.line_total, 0);\n      const deliveryFee = Number(raw.delivery_fee) || 0;\n      isOrder = true;\n      orderPayload = {\n        customer_name:    String(raw.customer_name    || '').trim(),\n        delivery_address: String(raw.delivery_address || '').trim(),\n        contact_number:   String(raw.contact_number   || ctx.from || '').trim(),\n        payment_method:   String(raw.payment_method   || '').trim(),\n        currency:         raw.currency || 'LKR',\n        items,\n        subtotal,\n        delivery_fee:     deliveryFee,\n        total:            subtotal + deliveryFee\n      };\n    }\n  } catch (e) {\n    orderError = 'ORDER_PARSE_FAILED: ' + e.message;\n  }\n}\n\n// Remove any stray URL / \"Image:\" the model added so the WhatsApp caption stays clean.\nbotReply = botReply\n  .replace(/(https?:\\/\\/[^\\s]+)/gi, '')\n  .replace(/image\\s*:/gi, '')\n  .replace(/[ \\t]+\\n/g, '\\n')\n  .replace(/\\n{2,}/g, '\\n')\n  .trim();\n\n// Image decision is deterministic, from Build Context.\nconst imageUrl    = isOrder ? null : (ctx.pendingImageUrl || null);\nconst hasImageUrl = !!imageUrl;\n\n// Clean text for the WhatsApp caption / text body.\nconst textReply = botReply || (isOrder ? 'Placing your order now…' : (ctx.pendingImageCaption || 'Here you go 🙂'));\n\n// For the WEBSITE DASHBOARD we keep the image URL inside the saved message so it renders.\n// WhatsApp does NOT use this field, so its caption stays clean.\nconst dashboardContent = hasImageUrl ? `${textReply}\\n${imageUrl}` : textReply;\n\nreturn [{ json: {\n  ...ctx,\n  botReply: textReply,        // clean text (used by WhatsApp text body)\n  textReply,                  // clean text (used by WhatsApp image caption)\n  dashboardContent,           // text + image url (used by dashboard save)\n  hasImageUrl,\n  imageUrl,\n  isOrder,\n  orderPayload,\n  orderError,\n  tokensUsed: (geminiRes.usageMetadata?.totalTokenCount || 0) + ($('Code — Detect Language + Route').first().json.understandTokens || 0)\n} }];"
+      },
+      "id": "e6e7dc20-3914-464c-b53e-762f89126952",
+      "name": "Code — Extract Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        38448,
+        35360
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.hasImageUrl }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "9eb83377-9d3b-4c57-b44a-075fcfc30ae2",
+      "name": "IF — Has Image?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        38704,
+        35360
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v19.0/{{ $('Code — Extract Reply').first().json.phoneNumberId }}/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Code — Extract Reply').first().json.waAccessToken }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": {{ JSON.stringify($('Code — Extract Reply').first().json.from) }},\n  \"type\": \"image\",\n  \"image\": {\n    \"link\": {{ JSON.stringify($('Code — Extract Reply').first().json.imageUrl) }},\n    \"caption\": {{ JSON.stringify($('Code — Extract Reply').first().json.textReply) }}\n  }\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "11e9f4ac-ac41-475e-a227-bcf68456fefd",
+      "name": "HTTP — Send WA Image",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        38976,
+        35232
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v19.0/{{ $('Code — Extract Reply').first().json.phoneNumberId }}/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Code — Extract Reply').first().json.waAccessToken }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": {{ JSON.stringify($('Code — Extract Reply').first().json.from) }},\n  \"type\": \"text\",\n  \"text\": {\n    \"body\": {{ JSON.stringify($('Code — Extract Reply').first().json.botReply) }}\n  }\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "d1c588a6-e71e-4847-9eca-8a7950bd11d1",
+      "name": "HTTP — Send WA Text",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        38976,
+        35488
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v19.0/{{ $('Code — Handoff Reply').first().json.phoneNumberId }}/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Code — Handoff Reply').first().json.waAccessToken }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": {{ JSON.stringify($('Code — Handoff Reply').first().json.from) }},\n  \"type\": \"text\",\n  \"text\": {\n    \"body\": {{ JSON.stringify($('Code — Handoff Reply').first().json.botReply) }}\n  }\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "0a318ae8-3528-4e1f-bd0e-8726ca3ee7ab",
+      "name": "HTTP — Send WA Handoff",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        37856,
+        34960
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={ \"ok\": true }",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "327e0b9e-d678-489e-9dd0-f4679bdb4070",
+      "name": "Respond — 200 OK (text)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        39232,
+        35360
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "numberInputs": 7,
+        "options": {}
+      },
+      "id": "f0498721-81a3-4bcb-a8be-8f308ba9dcdd",
+      "name": "Merge — Wait for APIs",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.1,
+      "position": [
+        37728,
+        35488
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://flowbot-steel.vercel.app/api/v1/chat/session?tenant_id={{ $('Code — Detect Language + Route').first().json.tenantId }}&session_id={{ $('Code — Detect Language + Route').first().json.from }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "flowbot_n8n_dev_key_8f3a1c9d2b7e4f60a1c3d5e7f9b1a3c5"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "92524081-e6e9-440f-83bc-3066320b9455",
+      "name": "HTTP — Get Chat History",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        37584,
+        35392
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://flowbot-steel.vercel.app/api/v1/n8n/webhook",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "flowbot_n8n_dev_key_8f3a1c9d2b7e4f60a1c3d5e7f9b1a3c5"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"action\":      \"save_message\",\n  \"tenant_id\":   {{ JSON.stringify($('Code — Detect Language + Route').first().json.tenantId) }},\n  \"session_id\":  {{ JSON.stringify($('Code — Detect Language + Route').first().json.from) }},\n  \"phone\":       {{ JSON.stringify($('Code — Detect Language + Route').first().json.from) }},\n  \"role\":        \"user\",\n  \"content\":     {{ JSON.stringify($('Code — Detect Language + Route').first().json.userMessage) }},\n  \"language\":    {{ JSON.stringify($('Code — Detect Language + Route').first().json.lang) }},\n  \"channel\":     \"whatsapp\",\n  \"intent\":      {{ JSON.stringify($('Code — Detect Language + Route').first().json.intent || '') }},\n  \"tokens_used\": 0\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "c5cf9935-0525-494a-a7c6-128bffeade3d",
+      "name": "HTTP — Save User Message",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        38240,
+        35056
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://flowbot-steel.vercel.app/api/v1/n8n/webhook",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "flowbot_n8n_dev_key_8f3a1c9d2b7e4f60a1c3d5e7f9b1a3c5"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"action\":      \"save_message\",\n  \"tenant_id\":   {{ JSON.stringify($('Code — Extract Reply').first().json.tenantId) }},\n  \"session_id\":  {{ JSON.stringify($('Code — Extract Reply').first().json.from) }},\n  \"phone\":       {{ JSON.stringify($('Code — Extract Reply').first().json.from) }},\n  \"role\":        \"assistant\",\n  \"content\":     {{ JSON.stringify($('Code — Extract Reply').first().json.dashboardContent) }},\n  \"language\":    {{ JSON.stringify($('Code — Extract Reply').first().json.lang) }},\n  \"intent\":      {{ JSON.stringify($('Code — Extract Reply').first().json.intent || '') }},\n  \"channel\":     \"whatsapp\",\n  \"tokens_used\": {{ $('Code — Extract Reply').first().json.tokensUsed }}\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "37920e46-3b3d-4af6-b722-d1b41859c129",
+      "name": "HTTP — Save Bot Reply",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        38240,
+        35280
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.isOrder }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a5fd7fe7-4866-4caf-abec-0cee545ddde6",
+      "name": "IF — Order Confirmed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        38576,
+        35360
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://flowbot-steel.vercel.app/api/v1/orders",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "flowbot_n8n_dev_key_8f3a1c9d2b7e4f60a1c3d5e7f9b1a3c5"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"tenant_id\":        {{ JSON.stringify($('Code — Extract Reply').first().json.tenantId) }},\n  \"session_id\":       {{ JSON.stringify($('Code — Extract Reply').first().json.from) }},\n  \"phone\":            {{ JSON.stringify($('Code — Extract Reply').first().json.from) }},\n  \"channel\":          \"whatsapp\",\n  \"language\":         {{ JSON.stringify($('Code — Extract Reply').first().json.lang) }},\n  \"status\":           \"{{ /bank/i.test($('Code — Extract Reply').first().json.orderPayload.payment_method || '') ? 'awaiting_payment' : 'pending' }}\",\n  \"customer_name\":    {{ JSON.stringify($('Code — Extract Reply').first().json.orderPayload.customer_name) }},\n  \"delivery_address\": {{ JSON.stringify($('Code — Extract Reply').first().json.orderPayload.delivery_address) }},\n  \"contact_number\":   {{ JSON.stringify($('Code — Extract Reply').first().json.orderPayload.contact_number) }},\n  \"payment_method\":   {{ JSON.stringify($('Code — Extract Reply').first().json.orderPayload.payment_method) }},\n  \"currency\":         {{ JSON.stringify($('Code — Extract Reply').first().json.orderPayload.currency) }},\n  \"items\":            {{ JSON.stringify($('Code — Extract Reply').first().json.orderPayload.items) }},\n  \"subtotal\":         {{ $('Code — Extract Reply').first().json.orderPayload.subtotal }},\n  \"delivery_fee\":     {{ $('Code — Extract Reply').first().json.orderPayload.delivery_fee }},\n  \"total\":            {{ $('Code — Extract Reply').first().json.orderPayload.total }}\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "e746c931-4ce1-4aa7-acc7-d0b15d2f67df",
+      "name": "HTTP — Create Order",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        38816,
+        35648
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const ext = $('Code — Extract Reply').first().json;\nconst res = $input.first().json;\nconst op  = ext.orderPayload || {};\nconst lang = ext.lang || 'EN';\n\n// Dashboard is the source of truth: trust the API echo, fall back to local only if absent.\nconst num = (a, b) => (a != null ? Number(a) : Number(b || 0));\nconst cur = op.currency || res.currency || 'LKR';\nconst fmt = n => `${cur} ${Number(n || 0).toLocaleString()}`;\n\nconst orderId = res.order_id || res.order_ref || res.id || op.order_ref || 'PENDING';\nconst locked  = res.error === 'order_locked' || res.status === 'order_locked';\nconst updated = res.mode === 'updated';\n\nconst subtotal = num(res.subtotal, op.subtotal);\nconst fee      = num(res.delivery_fee, op.delivery_fee);\nconst total    = num(res.total, op.total);\n\nconst items = (res.items && res.items.length ? res.items : op.items) || [];\nconst lines = items.map(it => {\n  const v  = it.variant ? ` (${it.variant})` : '';\n  const lt = it.line_total != null ? it.line_total : (Number(it.quantity || 0) * Number(it.unit_price || 0));\n  return `• ${it.name}${v} × ${it.quantity} = ${fmt(lt)}`;\n}).join('\\n');\n\nconst L = {\n  EN: { created:'✅ Your order is confirmed!', updated:'✏️ Your order has been updated.',\n        locked:'⚠️ This order is already confirmed and can no longer be changed. Please contact us directly if you need help.',\n        id:'Order ID', sub:'Subtotal', del:'Delivery Fee', tot:'Total', pay:'Payment', to:'Deliver to',\n        thanks:\"Thank you! We'll be in touch shortly 🙂\" },\n  SI: { created:'✅ ඔබගේ ඇණවුම තහවුරු විය!', updated:'✏️ ඔබගේ ඇණවුම යාවත්කාලීන කරන ලදී.',\n        locked:'⚠️ මෙම ඇණවුම දැනටමත් තහවුරු කර ඇති අතර වෙනස් කළ නොහැක. උදව් අවශ්‍ය නම් කරුණාකර අප හා සෘජුව සම්බන්ධ වන්න.',\n        id:'ඇණවුම් අංකය', sub:'උප එකතුව', del:'ගෙනයාම', tot:'මුළු මුදල', pay:'ගෙවීම', to:'ලිපිනය',\n        thanks:'ස්තූතියි! ඉක්මනින් සම්බන්ධ වෙමු 🙂' },\n  TA: { created:'✅ உங்கள் ஆர்டர் உறுதிசெய்யப்பட்டது!', updated:'✏️ உங்கள் ஆர்டர் புதுப்பிக்கப்பட்டது.',\n        locked:'⚠️ இந்த ஆர்டர் ஏற்கனவே உறுதிசெய்யப்பட்டது, இனி மாற்ற முடியாது. உதவி தேவைப்பட்டால் எங்களை நேரடியாக தொடர்பு கொள்ளவும்.',\n        id:'ஆர்டர் எண்', sub:'கூட்டுத்தொகை', del:'டெலிவரி', tot:'மொத்தம்', pay:'கட்டணம்', to:'முகவரி',\n        thanks:'நன்றி! விரைவில் தொடர்பு கொள்வோம் 🙂' },\n  SL: { created:'✅ Oyage order eka confirm una!', updated:'✏️ Oyage order eka update kara.',\n        locked:'⚠️ Me order eka already confirm wela, dan change karanna ba. Udauwak onanam apita direct message karanna.',\n        id:'Order ID', sub:'Subtotal', del:'Delivery', tot:'Total', pay:'Payment', to:'Address',\n        thanks:'Stuti! Api ikmanata connect wenawa 🙂' }\n};\nconst t = L[lang] || L.EN;\n\nlet body;\nif (locked) {\n  body = `${t.locked}\\n*${t.id}:* ${orderId}`;\n} else {\n  const head = updated ? t.updated : t.created;\n  body =\n`${head}\n*${t.id}:* ${orderId}\n\n${lines}\n\n${t.sub}: ${fmt(subtotal)}\n${t.del}: ${fmt(fee)}\n*${t.tot}: ${fmt(total)}*\n\n${t.pay}: ${op.payment_method || ''}\n${t.to}: ${op.delivery_address || ''}\n\n${t.thanks}`;\n}\n\nreturn [{ json: {\n  ...ext,\n  orderId,\n  orderApiResponse: res,\n  orderLocked: locked,\n  botReply: body,\n  textReply: body,\n  dashboardContent: body,\n  hasImageUrl: false,\n  imageUrl: null\n} }];\n"
+      },
+      "id": "9afbca05-3843-4681-bf23-4ed065afd2cd",
+      "name": "Code — Build Order Confirmation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        39040,
+        35648
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v19.0/{{ $('Code — Build Order Confirmation').first().json.phoneNumberId }}/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Code — Build Order Confirmation').first().json.waAccessToken }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": {{ JSON.stringify($('Code — Build Order Confirmation').first().json.from) }},\n  \"type\": \"text\",\n  \"text\": {\n    \"body\": {{ JSON.stringify($('Code — Build Order Confirmation').first().json.botReply) }}\n  }\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "54af7ef2-cb8e-4d65-8b5f-e9a169f344a6",
+      "name": "HTTP — Send WA Order Confirm",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        39264,
+        35648
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://flowbot-steel.vercel.app/api/v1/n8n/webhook",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "flowbot_n8n_dev_key_8f3a1c9d2b7e4f60a1c3d5e7f9b1a3c5"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"action\":      \"save_message\",\n  \"tenant_id\":   {{ JSON.stringify($('Code — Build Order Confirmation').first().json.tenantId) }},\n  \"session_id\":  {{ JSON.stringify($('Code — Build Order Confirmation').first().json.from) }},\n  \"phone\":       {{ JSON.stringify($('Code — Build Order Confirmation').first().json.from) }},\n  \"role\":        \"assistant\",\n  \"content\":     {{ JSON.stringify($('Code — Build Order Confirmation').first().json.dashboardContent) }},\n  \"language\":    {{ JSON.stringify($('Code — Build Order Confirmation').first().json.lang) }},\n  \"intent\":      \"order\",\n  \"channel\":     \"whatsapp\",\n  \"tokens_used\": {{ $('Code — Extract Reply').first().json.tokensUsed || 0 }}\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "66418346-c0ab-46d6-a4b8-61849b53b69b",
+      "name": "HTTP — Save Order Bot Reply",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        39488,
+        35648
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://flowbot-steel.vercel.app/api/v1/n8n/webhook",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "flowbot_n8n_dev_key_8f3a1c9d2b7e4f60a1c3d5e7f9b1a3c5"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"action\":    \"get_config\",\n  \"tenant_id\": {{ JSON.stringify($('Code — Detect Language + Route').first().json.tenantId) }}\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "b2237b66-2189-47e5-9c2c-9e1fadcd649a",
+      "name": "HTTP — n8n get_config",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        37504,
+        35520
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $('Code — Detect Language + Route').first().json.isImageSearch }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "98ac445b-302d-447d-87c8-aca5980a9edc",
+      "name": "IF — Image Message?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        36768,
+        35840
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://graph.facebook.com/v19.0/{{ $('Code — Detect Language + Route').first().json.mediaId }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Code — Detect Language + Route').first().json.waAccessToken }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "4900bd97-3016-4430-a5d1-a301557e7232",
+      "name": "HTTP — WA Get Media URL",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        37008,
+        35760
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Code — Detect Language + Route').first().json.waAccessToken }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "file"
+            }
+          },
+          "timeout": 20000
+        }
+      },
+      "id": "527500c3-40b4-4efe-baf4-9ac5887f2095",
+      "name": "HTTP — WA Download Media",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        37248,
+        35760
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Reads the downloaded WhatsApp image (binary) and prepares it for search.\n// Resolves real bytes via the binary helper so it works in ANY n8n storage mode\n// (memory / filesystem / external). Reading bin.data directly breaks when binaries\n// are offloaded — it returns the marker \"database\" instead of the image.\nconst det = $('Code — Detect Language + Route').first().json;\n\nlet base64 = null, mime = det.mediaMime || 'image/jpeg';\ntry {\n  const binMeta = $input.first().binary?.data;            // binary property is named \"data\"\n  if (binMeta) {\n    mime = binMeta.mimeType || mime;\n    const buffer = await this.helpers.getBinaryDataBuffer(0, 'data');\n    base64 = buffer.toString('base64');                   // genuine base64, no data: prefix\n  }\n} catch (e) { /* no binary — handled downstream as \"unavailable\" */ }\n\nconst dataUrl = base64 ? `data:${mime};base64,${base64}` : null;\n\nreturn [{ json: {\n  base64,\n  mime,\n  dataUrl,\n  tenantId: det.tenantId,\n  caption:  det.userMessage || ''\n} }];\n"
+      },
+      "id": "1d258fc1-2d0f-42b6-bce1-77db84a3550f",
+      "name": "Code — Prep Image Query",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        37488,
+        35760
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://flowbot-steel.vercel.app/api/v1/products/image-search",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "flowbot_n8n_dev_key_8f3a1c9d2b7e4f60a1c3d5e7f9b1a3c5"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"tenant_id\":    {{ JSON.stringify($('Code — Prep Image Query').first().json.tenantId) }},\n  \"image_base64\": {{ JSON.stringify($('Code — Prep Image Query').first().json.base64) }},\n  \"mime_type\":    {{ JSON.stringify($('Code — Prep Image Query').first().json.mime) }},\n  \"top_k\":        5\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 20000
+        }
+      },
+      "id": "1c54d3ba-9088-4bf4-943f-48e08797f1e9",
+      "name": "HTTP — Product Image Search",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        37760,
+        35760
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"systemInstruction\": { \"role\": \"system\", \"parts\": [ { \"text\": \"You identify products from photos for an online shop catalogue search. Reply with ONLY compact JSON, no prose, no code fences: {\\\"category\\\":\\\"\\\",\\\"type\\\":\\\"\\\",\\\"colors\\\":[],\\\"materials\\\":[],\\\"keywords\\\":[]}\" } ] },\n  \"contents\": [\n    { \"role\": \"user\", \"parts\": [\n      { \"text\": \"Identify this product for shop catalogue search.\" },\n      { \"inline_data\": { \"mime_type\": \"image/jpeg\", \"data\": {{ JSON.stringify(($('Code — Prep Image Query').first().json.dataUrl || '').replace(/^data:[^,]+,/, '')) }} } }\n    ] }\n  ],\n  \"generationConfig\": {\n    \"temperature\": 0.2,\n    \"maxOutputTokens\": 300,\n    \"responseMimeType\": \"application/json\"\n  }\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "6a691955-ea20-44f4-83c6-aaed3dcb92ad",
+      "name": "HTTP — Vision Describe (Gemini)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        37824,
+        36064
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "name": "Gemini Header Auth"
+        }
+      },
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// STRICT image search: only confident catalog matches survive. No guessing.\n// - Confidence gate (MIN_SIM) rejects weak embedding matches.\n// - Vision-keyword fuzzy fallback is REMOVED — if embeddings find nothing, we say\n//   we don't stock it (rather than describing the photo and guessing a lookalike).\nconst det = $('Code — Detect Language + Route').first().json;\nlet prep = {};\ntry { prep = $('Code — Prep Image Query').first().json || {}; } catch (e) {}\n\nconst MIN_SIM = 0.60;   // confidence bar — calibrate with real photos (raise toward 0.7 if still loose)\n\nconst out = {\n  isImageSearch: !!det.isImageSearch,\n  matches: [],\n  visionKeywords: [],   // intentionally unused in strict mode\n  unavailable: false,   // true ONLY when the photo couldn't be processed (system issue)\n  noStock: false        // true when search worked but nothing we sell matches\n};\n\nif (!det.isImageSearch) return [{ json: out }];   // text path — inert\n\n// Could the photo even be read?\nif (!prep.base64) { out.unavailable = true; return [{ json: out }]; }\n\n// Embedding endpoint result\nlet emb = null;\ntry { emb = $('HTTP — Product Image Search').first().json; } catch (e) {}\n\n// If the endpoint errored / returned no array, treat as a SYSTEM issue (don't claim we lack the item).\nif (!emb || !Array.isArray(emb.matches)) { out.unavailable = true; return [{ json: out }]; }\n\n// Keep only confident matches.\nout.matches = emb.matches\n  .map(m => ({\n    product_id:       m.product_id || m.id || null,\n    name:             m.name || '',\n    image_url:        m.image_url || m.image || null,\n    similarity_score: Number(m.similarity_score ?? m.score ?? 0)\n  }))\n  .filter(m => m.similarity_score >= MIN_SIM)\n  .sort((a, b) => b.similarity_score - a.similarity_score);\n\nout.noStock = out.matches.length === 0;   // searched fine, nothing matched → we don't sell it\nreturn [{ json: out }];"
+      },
+      "id": "3893f264-a584-49e0-be78-efc6bb7d44bc",
+      "name": "Code — Image Search Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        37968,
+        35824
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "e72a26a7-a036-47de-97db-977ff65bff48",
+      "name": "When clicking 'Test API'",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        36016,
+        36240
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://flowbot-steel.vercel.app/api/v1/n8n/webhook",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "flowbot_n8n_dev_key_8f3a1c9d2b7e4f60a1c3d5e7f9b1a3c5"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"action\": \"ping\"\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "e639cbbc-cd7d-40df-a087-3371e2c7d059",
+      "name": "HTTP — n8n ping",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        36288,
+        36240
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://flowbot-steel.vercel.app/api/v1/chatbot-settings?tenant_id=tenant_abc123",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "flowbot_n8n_dev_key_8f3a1c9d2b7e4f60a1c3d5e7f9b1a3c5"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "40a38a90-1cbd-40c1-914b-2ec23f59700d",
+      "name": "HTTP — GET /api/v1/chatbot-settings",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        36576,
+        36240
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Integration API — manual health check\\nRun this to verify the FlowBot API is reachable.\\n\\n- **ping** → `POST /api/v1/n8n/webhook` `{action:'ping'}`\\n- **chatbot-settings** → `GET /api/v1/chatbot-settings`\\n\\nReplace `tenant_abc123` with a real tenant id.\\nThese do NOT run in the live message flow.",
+        "height": 240,
+        "width": 360,
+        "color": 4
+      },
+      "id": "a6d71110-2271-4407-a219-c1bbd25de728",
+      "name": "Sticky — API Health Check",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        35968,
+        36112
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"systemInstruction\": { \"role\": \"system\", \"parts\": [ { \"text\": \"You are an intent parser for a multilingual WhatsApp shopping assistant in Sri Lanka. Read the customer's latest message and output ONLY one compact JSON object, no prose and no code fences, with EXACTLY this shape: {\\\"language\\\":\\\"EN\\\",\\\"intent\\\":\\\"general\\\",\\\"wantsImage\\\":false,\\\"city\\\":null,\\\"search\\\":{\\\"query\\\":\\\"\\\",\\\"category\\\":null,\\\"brand\\\":null,\\\"size\\\":null,\\\"color\\\":null,\\\"minPrice\\\":null,\\\"maxPrice\\\":null,\\\"inStockOnly\\\":false,\\\"browseAll\\\":false,\\\"skus\\\":[]}}. language is one of EN, SI (Sinhala), TA (Tamil), SL (Singlish = Sinhala written in English letters). intent is one of product, image, delivery, order, browse, categories, handoff, general. Infer intent from MEANING, not keywords. Examples: 'what dresses do you have in M size' -> intent product, query 'dress', size 'M'. 'red frock size L' -> intent product, query 'frock', color 'red', size 'L'. 'send me a t shirt' -> intent product, wantsImage true, query 't shirt'. 'show me the denim' or 'can you show denim' -> intent product, query 'denim', wantsImage true. 'send me image' or 'send a photo' (no product named) -> intent image, wantsImage true, empty query. 'send to Colombo' -> intent delivery, city Colombo. 'show me everything' -> intent browse, browseAll true. 'what categories do you have' or 'what types do you sell' -> intent categories. 'I want to order this' -> intent order. 'can I talk to a person' -> intent handoff. query: only the product words the customer is describing, no filler words. size: the requested size exactly as a shopper says it (S, M, L, XL, or a number). color: the requested colour as a single word. Parse price phrases like 'under 5000' (maxPrice 5000) and 'between 2000 and 4000' (minPrice 2000, maxPrice 4000). inStockOnly true if they ask about availability. Understand English, Sinhala, Tamil and Singlish. If unsure, use intent general with an empty query.\" } ] },\n  \"contents\": [\n    { \"role\": \"user\", \"parts\": [ { \"text\": {{ JSON.stringify($('Code — Parse WA Message').first().json.rawMessage || '(no text — product photo attached)') }} } ] }\n  ],\n  \"generationConfig\": {\n    \"temperature\": 0,\n    \"maxOutputTokens\": 800,\n    \"responseMimeType\": \"application/json\",\n    \"thinkingConfig\": { \"thinkingBudget\": 256 }\n  }\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "6b860b49-a140-42a2-9e97-bf23d99667a4",
+      "name": "LLM — Understand",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        36928,
+        35024
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "name": "Gemini Header Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.isOrderStatus }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        37200,
+        34896
+      ],
+      "id": "69cbb54e-d4cd-4ef9-af42-65111f3e0388",
+      "name": "IF — Order Status?"
+    },
+    {
+      "parameters": {
+        "url": "=https://flowbot-steel.vercel.app/api/v1/orders/lookup?tenant_id={{ $('Code — Detect Language + Route').first().json.tenantId }}&order_ref={{ encodeURIComponent($('Code — Resolve Order Ref').first().json.orderRef) }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "flowbot_n8n_dev_key_8f3a1c9d2b7e4f60a1c3d5e7f9b1a3c5"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        38064,
+        34832
+      ],
+      "id": "f97fa574-0da2-45f5-a333-e3486286ebfb",
+      "name": "HTTP — Get Order Status"
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = $('Code — Resolve Order Ref').first().json;\nconst res  = $input.first().json || {};\nconst lang = base.lang || 'EN';\nconst cur  = res.currency || 'LKR';\nconst fmt  = n => `${cur} ${Number(n || 0).toLocaleString()}`;\n\nconst L = {\n  EN: { title:'📦 Order Status', id:'Order ID', status:'Status', total:'Total', tracking:'Tracking #', eta:'Est. Delivery',\n        askId:'Sure! Please share your Order ID and I’ll check it for you (it looks like ORD-2026-0042).',\n        notFound:r=>`I couldn’t find an order with the ID ${r}. Please double-check the Order ID and try again.`,\n        statuses:{pending:'Pending confirmation',confirmed:'Confirmed',preparing:'Preparing',shipped:'Shipped',delivered:'Delivered',cancelled:'Cancelled'} },\n  SI: { title:'📦 ඇණවුම් තත්ත්වය', id:'ඇණවුම් අංකය', status:'තත්ත්වය', total:'මුළු මුදල', tracking:'ට්‍රැකින් අංකය', eta:'ලැබෙන දිනය',\n        askId:'හරි! කරුණාකර ඔබගේ ඇණවුම් අංකය එවන්න, මම බලන්නම් (උදා: ORD-2026-0042).',\n        notFound:r=>`${r} ඇණවුම් අංකයට අදාළ ඇණවුමක් හමු නොවීය. කරුණාකර අංකය නැවත පරීක්ෂා කරන්න.`,\n        statuses:{pending:'තහවුරු කිරීමට පොරොත්තුවෙන්',confirmed:'තහවුරුයි',preparing:'සූදානම් වෙමින්',shipped:'යවා ඇත',delivered:'ලබා දී ඇත',cancelled:'අවලංගුයි'} },\n  TA: { title:'📦 ஆர்டர் நிலை', id:'ஆர்டர் எண்', status:'நிலை', total:'மொத்தம்', tracking:'டிராக்கிங் எண்', eta:'டெலிவரி நாள்',\n        askId:'நிச்சயமாக! உங்கள் ஆர்டர் எண்ணை அனுப்புங்கள், நான் பார்க்கிறேன் (உதா: ORD-2026-0042).',\n        notFound:r=>`${r} என்ற ஆர்டர் எண் கிடைக்கவில்லை. தயவுசெய்து எண்ணை சரிபார்த்து மீண்டும் முயற்சிக்கவும்.`,\n        statuses:{pending:'உறுதிசெய்ய நிலுவையில்',confirmed:'உறுதிசெய்யப்பட்டது',preparing:'தயாராகிறது',shipped:'அனுப்பப்பட்டது',delivered:'வழங்கப்பட்டது',cancelled:'ரத்து'} },\n  SL: { title:'📦 Order Status', id:'Order ID', status:'Status', total:'Total', tracking:'Tracking #', eta:'Delivery Date',\n        askId:'Hari! Oyage Order ID eka evanna, mama check karannam (e.g. ORD-2026-0042).',\n        notFound:r=>`${r} kiyana Order ID ekata order ekak hamba une na. Order ID eka check karala aaye try karanna.`,\n        statuses:{pending:'Pending',confirmed:'Confirm una',preparing:'Hadanawa',shipped:'Yawala',delivered:'Deela',cancelled:'Cancel una'} }\n};\nconst t = L[lang] || L.EN;\n\nlet body;\nif (res.error === 'missing_ref' || !base.orderRef) {\n  body = t.askId;\n} else if (res.error === 'not_found' || (!res.order_ref && !res.status)) {\n  body = t.notFound(base.orderRef);\n} else {\n  const items = res.items || [];\n  const lines = items.map(it => {\n    const v = it.variant ? ` (${it.variant})` : '';\n    return `• ${it.name}${v} × ${it.quantity}`;\n  }).join('\\n') || '—';\n  const statusLabel = (t.statuses && t.statuses[res.status]) || res.status || '—';\n  const parts = [\n    t.title,\n    `*${t.id}:* ${res.order_ref}`,\n    `${t.status}: ${statusLabel}`,\n    '',\n    lines,\n    '',\n    `${t.total}: ${fmt(res.total)}`\n  ];\n  if (res.tracking_number) parts.push(`${t.tracking}: ${res.tracking_number}`);\n  const eta = res.estimated_delivery_date || res.eta\n    || (res.estimated_days ? `${res.estimated_days}` : null);\n  if (eta) parts.push(`${t.eta}: ${eta}`);\n  body = parts.join('\\n');\n}\n\nreturn [{ json: {\n  ...base,\n  botReply: body,\n  textReply: body,\n  dashboardContent: body,\n  intent: 'order_status',\n  tokensUsed: 0\n} }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        38352,
+        34832
+      ],
+      "id": "8bf609ea-4a77-4e33-910f-b184a7a3794c",
+      "name": "Code — Build Status Card"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v19.0/{{ $('Code — Build Status Card').first().json.phoneNumberId }}/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Code — Build Status Card').first().json.waAccessToken }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": {{ JSON.stringify($('Code — Build Status Card').first().json.from) }},\n  \"type\": \"text\",\n  \"text\": {\n    \"body\": {{ JSON.stringify($('Code — Build Status Card').first().json.botReply) }}\n  }\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        38064,
+        34832
+      ],
+      "id": "341842f4-bbf2-4637-aeca-063bf6db6c16",
+      "name": "HTTP — Send WA Status"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://flowbot-steel.vercel.app/api/v1/n8n/webhook",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "flowbot_n8n_dev_key_8f3a1c9d2b7e4f60a1c3d5e7f9b1a3c5"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"action\":      \"save_message\",\n  \"tenant_id\":   {{ JSON.stringify($('Code — Build Status Card').first().json.tenantId) }},\n  \"session_id\":  {{ JSON.stringify($('Code — Build Status Card').first().json.from) }},\n  \"phone\":       {{ JSON.stringify($('Code — Build Status Card').first().json.from) }},\n  \"role\":        \"assistant\",\n  \"content\":     {{ JSON.stringify($('Code — Build Status Card').first().json.dashboardContent) }},\n  \"language\":    {{ JSON.stringify($('Code — Build Status Card').first().json.lang) }},\n  \"intent\":      \"order_status\",\n  \"channel\":     \"whatsapp\",\n  \"tokens_used\": {{ $('Code — Detect Language + Route').first().json.understandTokens || 0 }}\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        38352,
+        34832
+      ],
+      "id": "22275ce4-7e8f-43d9-9aea-93309d74e7eb",
+      "name": "HTTP — Save Status Reply"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $('Code — Detect Language + Route').first().json.mediaId }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "f15bf120-eba8-4298-a5f3-9639ad5f7a4b",
+      "name": "IF — Has Media?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        37200,
+        36112
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://flowbot-steel.vercel.app/api/v1/orders/active-awaiting-payment?tenant_id={{ $('Code — Detect Language + Route').first().json.tenantId }}&phone={{ encodeURIComponent($('Code — Detect Language + Route').first().json.from) }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "flowbot_n8n_dev_key_8f3a1c9d2b7e4f60a1c3d5e7f9b1a3c5"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "f00d309c-afa2-41ca-8f1d-c2b3165e9e17",
+      "name": "HTTP — Get Awaiting-Payment Order",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        37472,
+        36112
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.awaiting }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "6b19f4b1-01af-45b2-8a29-afa7b0ba0f63",
+      "name": "IF — Is Payment Proof?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        37728,
+        36112
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://graph.facebook.com/v19.0/{{ $('Code — Detect Language + Route').first().json.mediaId }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Code — Detect Language + Route').first().json.waAccessToken }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "c18fc003-5bda-459b-b756-4474cb95cbc7",
+      "name": "HTTP — WA Get Proof Media URL",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        38000,
+        36112
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Code — Detect Language + Route').first().json.waAccessToken }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "file"
+            }
+          },
+          "timeout": 20000
+        }
+      },
+      "id": "0b8f8aea-66e4-40f4-a828-2666bda4a020",
+      "name": "HTTP — WA Download Proof Media",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        38256,
+        36112
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const meta  = $('Code — Detect Language + Route').first().json;\nconst order = $('HTTP — Get Awaiting-Payment Order').first().json.order || {};\n\nconst item = $input.first();\nconst bin  = item.binary || {};\nconst key  = Object.keys(bin)[0] || null;\n\n// Read the ACTUAL bytes via the binary helper. item.binary[key].data may only be a\n// storage-mode stub (e.g. 'database'/'filesystem') when n8n isn't storing binary inline,\n// so reaching into .data can yield garbage. getBinaryDataBuffer works in every mode.\nlet fileBase64 = null;\nif (key) {\n  try {\n    const buff = await this.helpers.getBinaryDataBuffer(0, key);\n    fileBase64 = buff.toString('base64');\n  } catch (e) {\n    const inline = bin[key].data;\n    fileBase64 = (inline && inline !== 'database' && inline.length > 100) ? inline : null;\n  }\n}\n\nconst mimeType = (key && bin[key].mimeType) || meta.mediaMime || 'application/octet-stream';\nconst fileName = (key && bin[key].fileName) || meta.mediaFilename || ('proof_' + (order.order_ref || Date.now()));\n\n// Prefer an ORD reference typed in the caption; else the order's own ref.\nconst caption = meta.userMessage || '';\nconst m = caption.match(/ORD[-\\s]?\\d{4}[-\\s]?\\d{3,}/i);\nconst customerReference = m ? m[0].toUpperCase().replace(/\\s+/g,'-').replace(/-+/g,'-') : (order.order_ref || null);\n\nreturn [{ json: { ...meta, orderId: order.id, orderRef: order.order_ref, fileBase64, mimeType, fileName, customerReference } }];"
+      },
+      "id": "ed0a9870-8098-4661-a55c-5d4c2ff94148",
+      "name": "Code — Prep Proof Upload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        38512,
+        36112
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://flowbot-steel.vercel.app/api/v1/orders/payment-proof",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "flowbot_n8n_dev_key_8f3a1c9d2b7e4f60a1c3d5e7f9b1a3c5"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"tenant_id\":          {{ JSON.stringify($json.tenantId) }},\n  \"order_id\":           {{ JSON.stringify($json.orderId) }},\n  \"image_base64\":       {{ JSON.stringify($json.fileBase64) }},\n  \"mime_type\":          {{ JSON.stringify($json.mimeType) }},\n  \"file_name\":          {{ JSON.stringify($json.fileName) }},\n  \"customer_reference\": {{ JSON.stringify($json.customerReference) }}\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 20000
+        }
+      },
+      "id": "13f48c62-7c4d-4b10-8ae0-560d861999b6",
+      "name": "HTTP — Upload Proof",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        38768,
+        36112
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const meta  = $('Code — Detect Language + Route').first().json;\nconst order = $('HTTP — Get Awaiting-Payment Order').first().json.order || {};\nconst up    = $('HTTP — Upload Proof').first().json || {};\nconst lang  = meta.lang || 'EN';\nconst ref   = order.order_ref || up.order_ref || 'your order';\nconst ok    = up.success === true || up.status === 'pending_verification';\n\nconst L = {\n  EN: o => o\n    ? `🧾 Thanks! We’ve received your payment slip for *${ref}*.\\nOur team is verifying it now — you’ll get a confirmation as soon as it’s approved. 🙏`\n    : `⚠️ We couldn’t save your payment slip just now. Please try uploading it again, or contact us for help.`,\n  SI: o => o\n    ? `🧾 ස්තූතියි! *${ref}* සඳහා ඔබගේ ගෙවීම් රිසිට්පත ලැබුණා.\\nඅපගේ කණ්ඩායම එය පරීක්ෂා කරමින් සිටී — අනුමත වූ විගස ඔබට තහවුරු කිරීමක් ලැබේවි. 🙏`\n    : `⚠️ ඔබගේ ගෙවීම් රිසිට්පත දැන් සුරැකීමට නොහැකි විය. කරුණාකර නැවත උත්සාහ කරන්න.`,\n  TA: o => o\n    ? `🧾 நன்றி! *${ref}* க்கான உங்கள் கட்டண ரசீதைப் பெற்றோம்.\\nஎங்கள் குழு அதைச் சரிபார்க்கிறது — அங்கீகரிக்கப்பட்டவுடன் உறுதிப்படுத்தல் கிடைக்கும். 🙏`\n    : `⚠️ உங்கள் கட்டண ரசீதை இப்போது சேமிக்க முடியவில்லை. மீண்டும் முயற்சிக்கவும்.`,\n  SL: o => o\n    ? `🧾 Stuti! *${ref}* sandaha oyage payment slip eka apita labuna.\\nApe team eka eka verify karanawa — approve unu gaman confirmation ekak labenawa. 🙏`\n    : `⚠️ Oyage payment slip eka dan save karanna bæ una. Aaye try karanna.`\n};\nconst body = (L[lang] || L.EN)(ok);\nreturn [{ json: { ...meta, botReply: body, textReply: body, dashboardContent: body, intent: 'payment_proof', tokensUsed: 0 } }];"
+      },
+      "id": "d32ced1e-24a6-4b1b-90cd-05aa314fd9ad",
+      "name": "Code — Build Proof Ack",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        39024,
+        36112
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v19.0/{{ $('Code — Build Proof Ack').first().json.phoneNumberId }}/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Code — Build Proof Ack').first().json.waAccessToken }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": {{ JSON.stringify($('Code — Build Proof Ack').first().json.from) }},\n  \"type\": \"text\",\n  \"text\": {\n    \"body\": {{ JSON.stringify($('Code — Build Proof Ack').first().json.botReply) }}\n  }\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "d401ae65-ee60-4706-9df6-ec7f766258a8",
+      "name": "HTTP — Send WA Proof Ack",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        39280,
+        36112
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://flowbot-steel.vercel.app/api/v1/n8n/webhook",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "flowbot_n8n_dev_key_8f3a1c9d2b7e4f60a1c3d5e7f9b1a3c5"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"action\": \"save_message\",\n  \"tenant_id\":  {{ JSON.stringify($('Code — Build Proof Ack').first().json.tenantId) }},\n  \"session_id\": {{ JSON.stringify($('Code — Build Proof Ack').first().json.from) }},\n  \"phone\":      {{ JSON.stringify($('Code — Build Proof Ack').first().json.from) }},\n  \"role\":       \"assistant\",\n  \"content\":    {{ JSON.stringify($('Code — Build Proof Ack').first().json.dashboardContent) }},\n  \"language\":   {{ JSON.stringify($('Code — Build Proof Ack').first().json.lang) }},\n  \"intent\":     \"payment_proof\",\n  \"channel\": \"whatsapp\",\n  \"tokens_used\": {{ $('Code — Detect Language + Route').first().json.understandTokens || 0 }}\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "90a97a91-4ee4-47fb-857d-834e553404e8",
+      "name": "HTTP — Save Proof Reply",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        39536,
+        36112
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ /bank/i.test($('Code — Extract Reply').first().json.orderPayload.payment_method || '') }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "e19aaf58-e2c2-49da-b41d-967f420abe70",
+      "name": "IF — Bank Transfer?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        38816,
+        35872
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://flowbot-steel.vercel.app/api/v1/bank-details?tenant_id={{ $('Code — Extract Reply').first().json.tenantId }}&active_only=true",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "flowbot_n8n_dev_key_8f3a1c9d2b7e4f60a1c3d5e7f9b1a3c5"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "7103ce4f-77da-42b4-b867-d401e5cab6f9",
+      "name": "HTTP — Get Bank Details",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        39072,
+        35808
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const ext   = $('Code — Extract Reply').first().json;\nconst ord   = $('HTTP — Create Order').first().json || {};\nconst banks = ($input.first().json.bank_details) || [];\nconst lang  = ext.lang || 'EN';\nconst op    = ext.orderPayload || {};\nconst cur   = op.currency || 'LKR';\nconst fmt   = n => `${cur} ${Number(n || 0).toLocaleString()}`;\nconst orderRef = ord.order_ref || ord.order_id || ord.id || 'PENDING';\n\nconst acct = banks.map(a => `🏦 ${a.bank_name}\\n${a.account_name}\\nA/C: ${a.account_number}\\n${a.branch_name || ''}${a.branch_code ? ' (' + a.branch_code + ')' : ''}` + (a.swift_code ? `\\nSWIFT: ${a.swift_code}` : '')).join('\\n\\n');\n\nconst L = {\n  EN: { head:'🧾 *Bank Transfer Details*', total:'Amount to pay', ref:'IMPORTANT — use this as your payment reference', ask:'After paying, please *upload your payment slip* (photo or PDF) right here in this chat. We’ll verify it and confirm your order. 🙏' },\n  SI: { head:'🧾 *බැංකු හුවමාරු විස්තර*', total:'ගෙවිය යුතු මුදල', ref:'වැදගත් — ගෙවීමේ යොමුව ලෙස මෙය භාවිතා කරන්න', ask:'ගෙවීමෙන් පසු, කරුණාකර ඔබගේ ගෙවීම් රිසිට්පත (ඡායාරූපය හෝ PDF) මෙම චැට් එකේම *එවන්න*. අපි එය පරීක්ෂා කර ඔබගේ ඇණවුම තහවුරු කරමු. 🙏' },\n  TA: { head:'🧾 *வங்கி பரிமாற்ற விவரங்கள்*', total:'செலுத்த வேண்டிய தொகை', ref:'முக்கியம் — இதை உங்கள் கட்டணக் குறிப்பாகப் பயன்படுத்தவும்', ask:'பணம் செலுத்திய பிறகு, உங்கள் கட்டண ரசீதை (புகைப்படம் அல்லது PDF) இந்த அரட்டையில் *அனுப்பவும்*. நாங்கள் சரிபார்த்து உங்கள் ஆர்டரை உறுதிப்படுத்துவோம். 🙏' },\n  SL: { head:'🧾 *Bank Transfer Details*', total:'Geviya yutu amount eka', ref:'IMPORTANT — payment reference eka widihata meka use karanna', ask:'Gevwata passe, oyage payment slip eka (photo or PDF) me chat ekatama *evanna*. Api eka verify karala order eka confirm karanawa. 🙏' }\n};\nconst t = L[lang] || L.EN;\nconst body = `${t.head}\\n\\n${acct}\\n\\n${t.total}: *${fmt(op.total)}*\\n\\n📌 ${t.ref}:\\n*${orderRef}*\\n\\n${t.ask}`;\nreturn [{ json: { ...ext, orderRef, botReply: body, textReply: body, dashboardContent: body, intent: 'bank_transfer_instructions', tokensUsed: 0 } }];"
+      },
+      "id": "dc779430-5148-4093-9fcf-c91fee92120c",
+      "name": "Code — Build Bank Instructions",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        39328,
+        35808
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v19.0/{{ $('Code — Build Bank Instructions').first().json.phoneNumberId }}/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Code — Build Bank Instructions').first().json.waAccessToken }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": {{ JSON.stringify($('Code — Build Bank Instructions').first().json.from) }},\n  \"type\": \"text\",\n  \"text\": {\n    \"body\": {{ JSON.stringify($('Code — Build Bank Instructions').first().json.botReply) }}\n  }\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "142883b2-0920-44a2-aa8d-8a3ad1480edd",
+      "name": "HTTP — Send WA Bank Details",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        39584,
+        35808
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://flowbot-steel.vercel.app/api/v1/n8n/webhook",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "flowbot_n8n_dev_key_8f3a1c9d2b7e4f60a1c3d5e7f9b1a3c5"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"action\": \"save_message\",\n  \"tenant_id\":  {{ JSON.stringify($('Code — Build Bank Instructions').first().json.tenantId) }},\n  \"session_id\": {{ JSON.stringify($('Code — Build Bank Instructions').first().json.from) }},\n  \"phone\":      {{ JSON.stringify($('Code — Build Bank Instructions').first().json.from) }},\n  \"role\":       \"assistant\",\n  \"content\":    {{ JSON.stringify($('Code — Build Bank Instructions').first().json.dashboardContent) }},\n  \"language\":   {{ JSON.stringify($('Code — Build Bank Instructions').first().json.lang) }},\n  \"intent\":     \"bank_transfer_instructions\",\n  \"channel\": \"whatsapp\",\n  \"tokens_used\": {{ $('Code — Extract Reply').first().json.tokensUsed || 0 }}\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "132a0bbb-a807-4233-8b4f-1ee8b7a1cb03",
+      "name": "HTTP — Save Bank Reply",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        39840,
+        35808
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://flowbot-steel.vercel.app/api/v1/orders/active-awaiting-payment?tenant_id={{ $('Code — Extract Reply').first().json.tenantId }}&phone={{ encodeURIComponent($('Code — Extract Reply').first().json.from) }}&statuses=awaiting_payment,pending_verification",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "flowbot_n8n_dev_key_8f3a1c9d2b7e4f60a1c3d5e7f9b1a3c5"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "36cd9671-44a9-42fe-9e14-3e0a4d337674",
+      "name": "HTTP — Check Existing Order",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        38512,
+        35440
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.awaiting }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "9e9527f7-f278-4f4d-a0d2-809ea5d5a5e3",
+      "name": "IF — Already Has Order?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        38768,
+        35440
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const ext   = $('Code — Extract Reply').first().json;\nconst res   = $('HTTP — Check Existing Order').first().json || {};\nconst order = res.order || {};\nconst lang  = ext.lang || 'EN';\nconst ref   = order.order_ref || 'your order';\nconst verifying = order.status === 'pending_verification';\n\nconst L = {\n  EN: v => v ? `✅ You already have an order *${ref}* and we’re verifying your payment now. No need to order again — we’ll confirm as soon as it’s approved. 🙏` : `📌 You already have a pending order *${ref}* awaiting payment. Please upload your payment slip here once you’ve paid — no need to place a new order. 🙏`,\n  SI: v => v ? `✅ ඔබට දැනටමත් *${ref}* ඇණවුමක් ඇත. අපි දැන් ඔබගේ ගෙවීම පරීක්ෂා කරමින් සිටිමු. නැවත ඇණවුම් කිරීම අවශ්‍ය නැත — අනුමත වූ විගස තහවුරු කරමු. 🙏` : `📌 ඔබට දැනටමත් *${ref}* ඇණවුමක් ගෙවීමට බලාපොරොත්තුවෙන් ඇත. ගෙවීමෙන් පසු ගෙවීම් රිසිට්පත මෙතැනට එවන්න — නව ඇණවුමක් අවශ්‍ය නැත. 🙏`,\n  TA: v => v ? `✅ உங்களிடம் ஏற்கனவே *${ref}* ஆர்டர் உள்ளது. உங்கள் கட்டணத்தைச் சரிபார்க்கிறோம். மீண்டும் ஆர்டர் செய்ய வேண்டாம் — அங்கீகரிக்கப்பட்டவுடன் உறுதிப்படுத்துவோம். 🙏` : `📌 உங்களிடம் ஏற்கனவே *${ref}* ஆர்டர் கட்டணத்திற்காகக் காத்திருக்கிறது. பணம் செலுத்திய பிறகு ரசீதை இங்கே அனுப்பவும் — புதிய ஆர்டர் வேண்டாம். 🙏`,\n  SL: v => v ? `✅ Oyata dænatamath *${ref}* order ekak thiyenawa, api dæn payment eka verify karanawa. Aaye order karanna ona næ — approve unu gaman confirm karanawa. 🙏` : `📌 Oyata dænatamath *${ref}* order ekak payment ekata balaporoththuwen thiyenawa. Gevwata passe slip eka methanata evanna — aluth order ekak ona næ. 🙏`\n};\nconst body = (L[lang] || L.EN)(verifying);\nreturn [{ json: { ...ext, botReply: body, textReply: body, dashboardContent: body, intent: 'duplicate_order_blocked', tokensUsed: 0 } }];"
+      },
+      "id": "cc01b557-7758-43d5-bbd2-2826315c98cd",
+      "name": "Code — Build Duplicate Notice",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        39024,
+        35312
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v19.0/{{ $('Code — Build Duplicate Notice').first().json.phoneNumberId }}/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Code — Build Duplicate Notice').first().json.waAccessToken }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": {{ JSON.stringify($('Code — Build Duplicate Notice').first().json.from) }},\n  \"type\": \"text\",\n  \"text\": {\n    \"body\": {{ JSON.stringify($('Code — Build Duplicate Notice').first().json.botReply) }}\n  }\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "34e59c0c-7a57-4637-a20c-64f74d8d7939",
+      "name": "HTTP — Send WA Duplicate Notice",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        39280,
+        35312
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://flowbot-steel.vercel.app/api/v1/n8n/webhook",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "flowbot_n8n_dev_key_8f3a1c9d2b7e4f60a1c3d5e7f9b1a3c5"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"action\": \"save_message\",\n  \"tenant_id\":  {{ JSON.stringify($('Code — Build Duplicate Notice').first().json.tenantId) }},\n  \"session_id\": {{ JSON.stringify($('Code — Build Duplicate Notice').first().json.from) }},\n  \"phone\":      {{ JSON.stringify($('Code — Build Duplicate Notice').first().json.from) }},\n  \"role\":       \"assistant\",\n  \"content\":    {{ JSON.stringify($('Code — Build Duplicate Notice').first().json.dashboardContent) }},\n  \"language\":   {{ JSON.stringify($('Code — Build Duplicate Notice').first().json.lang) }},\n  \"intent\":     \"duplicate_order_blocked\",\n  \"channel\": \"whatsapp\",\n  \"tokens_used\": {{ $('Code — Extract Reply').first().json.tokensUsed || 0 }}\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "d4c2a835-c327-4ee0-a5ef-2f65fa508392",
+      "name": "HTTP — Save Duplicate Reply",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        39536,
+        35312
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "order-status",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "5e501608-5712-43f4-9e82-13e816aedf68",
+      "name": "Webhook — Order Status",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        35968,
+        36848
+      ],
+      "webhookId": "flowbot-order-status-webhook"
+    },
+    {
+      "parameters": {
+        "url": "=https://flowbot-steel.vercel.app/api/v1/tenant-wa-credentials?tenant_id={{ $json.body ? $json.body.tenant_id : $json.tenant_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "flowbot_n8n_dev_key_8f3a1c9d2b7e4f60a1c3d5e7f9b1a3c5"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "e52bce9e-e1f8-4f25-81ca-d1444ef3e8bd",
+      "name": "HTTP — Get Tenant",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        36208,
+        36848
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $('Webhook — Order Status').first().json.body || $('Webhook — Order Status').first().json;\nconst tenant = $('HTTP — Get Tenant').first().json.tenant || {};\n\nconst lang   = (raw.language || 'EN').toUpperCase();\nconst status = raw.new_status;\nconst ref    = raw.order_ref || raw.order_id || 'your order';\nconst name   = raw.customer_name || '';\nconst cur    = raw.currency || 'LKR';\nconst total  = `${cur} ${Number(raw.total || 0).toLocaleString()}`;\nconst reason = (raw.reason || '').trim();\n\n// Only notify on terminal payment decisions.\nconst sendable = status === 'confirmed' || status === 'cancelled';\n\nconst T = {\n  confirmed: {\n    EN: `✅ *Payment Confirmed!*\\n\\nHi ${name}, your payment for *${ref}* has been verified.\\nTotal: ${total}\\n\\nWe’re now preparing your order. Thank you! 🙏`,\n    SI: `✅ *ගෙවීම තහවුරු විය!*\\n\\nආයුබෝවන් ${name}, *${ref}* සඳහා ඔබගේ ගෙවීම තහවුරු කරන ලදී.\\nමුළු මුදල: ${total}\\n\\nඅපි දැන් ඔබගේ ඇණවුම සූදානම් කරමින් සිටිමු. ස්තූතියි! 🙏`,\n    TA: `✅ *கட்டணம் உறுதிசெய்யப்பட்டது!*\\n\\nவணக்கம் ${name}, *${ref}* க்கான உங்கள் கட்டணம் சரிபார்க்கப்பட்டது.\\nமொத்தம்: ${total}\\n\\nஉங்கள் ஆர்டரை இப்போது தயாரிக்கிறோம். நன்றி! 🙏`,\n    SL: `✅ *Payment Confirm una!*\\n\\nHi ${name}, *${ref}* sandaha oyage payment eka verify una.\\nTotal: ${total}\\n\\nApi dæn oyage order eka hadanawa. Stuti! 🙏`\n  },\n  cancelled: {\n    EN: `❌ *Payment Not Verified*\\n\\nHi ${name}, we could not verify the payment for *${ref}*.${reason ? '\\nReason: ' + reason : ''}\\n\\nPlease re-upload your payment slip or contact us for help. 🙏`,\n    SI: `❌ *ගෙවීම තහවුරු නොවීය*\\n\\nආයුබෝවන් ${name}, *${ref}* සඳහා ගෙවීම තහවුරු කළ නොහැකි විය.${reason ? '\\nහේතුව: ' + reason : ''}\\n\\nකරුණාකර ඔබගේ ගෙවීම් රිසිට්පත නැවත එවන්න හෝ අප හා සම්බන්ධ වන්න. 🙏`,\n    TA: `❌ *கட்டணம் சரிபார்க்கப்படவில்லை*\\n\\nவணக்கம் ${name}, *${ref}* க்கான கட்டணத்தைச் சரிபார்க்க முடியவில்லை.${reason ? '\\nகாரணம்: ' + reason : ''}\\n\\nஉங்கள் கட்டண ரசீதை மீண்டும் அனுப்பவும் அல்லது எங்களைத் தொடர்பு கொள்ளவும். 🙏`,\n    SL: `❌ *Payment Verify une na*\\n\\nHi ${name}, *${ref}* sandaha payment eka verify karanna bæ una.${reason ? '\\nReason: ' + reason : ''}\\n\\nPayment slip eka aaye evanna nætnam apita message karanna. 🙏`\n  }\n};\n\nconst body = sendable ? ((T[status] || {})[lang] || (T[status] || {}).EN || '') : '';\n\nreturn [{ json: {\n  sendable,\n  to:            raw.customer_phone,\n  phoneNumberId: tenant.phone_number_id,\n  waAccessToken: tenant.wa_access_token,\n  tenantId:      raw.tenant_id,\n  orderRef:      ref,\n  newStatus:     status,\n  body\n} }];"
+      },
+      "id": "c1ed5d69-e7a5-46dd-9a27-364cbbfae19a",
+      "name": "Code — Build Notification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        36448,
+        36848
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.sendable }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "2a0153f8-d980-4fe5-8595-9cdba08bb93e",
+      "name": "IF — Sendable?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        36688,
+        36848
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v19.0/{{ $json.phoneNumberId }}/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.waAccessToken }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": {{ JSON.stringify($json.to) }},\n  \"type\": \"text\",\n  \"text\": {\n    \"body\": {{ JSON.stringify($json.body) }}\n  }\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "c292279b-4272-47a6-a534-20e4ac2fb42f",
+      "name": "HTTP — Send WA Notification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        36928,
+        36752
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={ \"ok\": true, \"notified\": {{ $json.sendable || false }} }",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "b066f934-e7c1-4d7d-bde3-a22c5c4b8942",
+      "name": "Respond — 200 OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        37168,
+        36848
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://flowbot-steel.vercel.app/api/v1/n8n/webhook",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "flowbot_n8n_dev_key_8f3a1c9d2b7e4f60a1c3d5e7f9b1a3c5"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"action\": \"get_control\",\n  \"tenant_id\": {{ JSON.stringify($('HTTP — Get Tenant by Phone ID').first().json.tenant.id) }},\n  \"phone\":     {{ JSON.stringify($('Code — Parse WA Message').first().json.from) }}\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 8000
+        }
+      },
+      "id": "19cdcd68-d87e-40a5-9dfa-91c2f30ad0c5",
+      "name": "HTTP — Get Conversation Control",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        36384,
+        35680
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.control }}",
+              "rightValue": "human",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "4b34b946-337c-43ef-a44f-ca9fc311793f",
+      "name": "IF — Human Controlled?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        36640,
+        35680
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://flowbot-steel.vercel.app/api/v1/n8n/webhook",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "flowbot_n8n_dev_key_8f3a1c9d2b7e4f60a1c3d5e7f9b1a3c5"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"action\": \"save_message\",\n  \"tenant_id\":  {{ JSON.stringify($('HTTP — Get Tenant by Phone ID').first().json.tenant.id) }},\n  \"session_id\": {{ JSON.stringify($('Code — Parse WA Message').first().json.from) }},\n  \"phone\":      {{ JSON.stringify($('Code — Parse WA Message').first().json.from) }},\n  \"role\":       \"user\",\n  \"content\":    {{ JSON.stringify($('Code — Parse WA Message').first().json.rawMessage) }},\n  \"language\":   \"\",\n  \"intent\": \"customer_message_while_paused\",\n  \"channel\": \"whatsapp\",\n  \"tokens_used\": 0\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 8000
+        }
+      },
+      "id": "c6eceb45-47fd-4479-853a-b9352e4ba90e",
+      "name": "HTTP — Save Inbound (Paused)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        36896,
+        35840
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://flowbot-steel.vercel.app/api/v1/n8n/webhook",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "flowbot_n8n_dev_key_8f3a1c9d2b7e4f60a1c3d5e7f9b1a3c5"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"action\": \"create_ticket\",\n  \"tenant_id\":     {{ JSON.stringify($('Code — Detect Language + Route').first().json.tenantId) }},\n  \"phone\":         {{ JSON.stringify($('Code — Detect Language + Route').first().json.from) }},\n  \"reason\":        \"complaint\",\n  \"summary\":       {{ JSON.stringify($('Code — Detect Language + Route').first().json.userMessage) }},\n  \"customer_name\": {{ JSON.stringify($('Code — Detect Language + Route').first().json.customerName || null) }}\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "3bd3c2f9-0277-413a-a315-622a2438219d",
+      "name": "HTTP — Escalate to Human",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        38784,
+        34672
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://flowbot-steel.vercel.app/api/v1/n8n/webhook",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "flowbot_n8n_dev_key_8f3a1c9d2b7e4f60a1c3d5e7f9b1a3c5"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"action\": \"save_message\",\n  \"tenant_id\":  {{ JSON.stringify($('Code — Handoff Reply').first().json.tenantId) }},\n  \"session_id\": {{ JSON.stringify($('Code — Handoff Reply').first().json.from) }},\n  \"phone\":      {{ JSON.stringify($('Code — Handoff Reply').first().json.from) }},\n  \"role\":       \"assistant\",\n  \"content\":    {{ JSON.stringify($('Code — Handoff Reply').first().json.botReply) }},\n  \"language\":   {{ JSON.stringify($('Code — Handoff Reply').first().json.lang) }},\n  \"intent\":     \"handoff_ack\",\n  \"channel\": \"whatsapp\",\n  \"tokens_used\": {{ $('Code — Detect Language + Route').first().json.understandTokens || 0 }}\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 8000
+        }
+      },
+      "id": "bd5e6e0a-6ae8-4260-bbda-0cb3a416bac2",
+      "name": "HTTP — Save Handoff Reply",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        39584,
+        34592
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "agent-reply",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "63dc5bef-c1d4-41bc-95ad-a8c9e97178c4",
+      "name": "Webhook — Agent Reply",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        35968,
+        37552
+      ],
+      "webhookId": "flowbot-agent-reply-webhook"
+    },
+    {
+      "parameters": {
+        "url": "=https://flowbot-steel.vercel.app/api/v1/tenant-wa-credentials?tenant_id={{ $json.body ? $json.body.tenant_id : $json.tenant_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "flowbot_n8n_dev_key_8f3a1c9d2b7e4f60a1c3d5e7f9b1a3c5"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "b5d95aca-16cb-4499-b770-e2351ec637dd",
+      "name": "HTTP — Get Agent Tenant Creds",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        36224,
+        37552
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw    = $('Webhook — Agent Reply').first().json.body || $('Webhook — Agent Reply').first().json;\nconst tenant = $('HTTP — Get Agent Tenant Creds').first().json.tenant || {};\nconst to     = raw.phone;\nconst body   = (raw.message || '').toString();\nconst sendable = !!(to && body && tenant.phone_number_id && tenant.wa_access_token);\nreturn [{ json: {\n  sendable,\n  to,\n  body,\n  phoneNumberId: tenant.phone_number_id,\n  waAccessToken: tenant.wa_access_token,\n  tenantId:      raw.tenant_id,\n  agentName:     raw.agent_name || null\n} }];"
+      },
+      "id": "456465f4-3306-46e6-9e39-35865b18d322",
+      "name": "Code — Build Agent Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        36464,
+        37552
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.sendable }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "09e8f6e6-c314-4de1-9588-6ae80cfa48f0",
+      "name": "IF — Agent Sendable?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        36720,
+        37552
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v19.0/{{ $json.phoneNumberId }}/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.waAccessToken }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": {{ JSON.stringify($json.to) }},\n  \"type\": \"text\",\n  \"text\": {\n    \"body\": {{ JSON.stringify($json.body) }}\n  }\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "7d551e1c-bd92-4fe4-9dd7-d4daa4a3be5a",
+      "name": "HTTP — Send WA Agent Reply",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        36960,
+        37456
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://flowbot-steel.vercel.app/api/v1/n8n/webhook",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "flowbot_n8n_dev_key_8f3a1c9d2b7e4f60a1c3d5e7f9b1a3c5"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"action\": \"save_message\",\n  \"tenant_id\":  {{ JSON.stringify($('Code — Build Agent Message').first().json.tenantId) }},\n  \"session_id\": {{ JSON.stringify($('Code — Build Agent Message').first().json.to) }},\n  \"phone\":      {{ JSON.stringify($('Code — Build Agent Message').first().json.to) }},\n  \"role\":       \"assistant\",\n  \"content\":    {{ JSON.stringify($('Code — Build Agent Message').first().json.body) }},\n  \"language\":   \"\",\n  \"intent\": \"agent_reply\",\n  \"channel\": \"whatsapp\",\n  \"tokens_used\": 0\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 8000
+        }
+      },
+      "id": "28eca0bc-8eb8-43f1-b72e-02dfa46dc9d8",
+      "name": "HTTP — Save Agent Reply",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        37216,
+        37456
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={ \"ok\": true, \"sent\": {{ $json.sendable || false }} }",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "c0b43771-aa57-4f4b-bb1d-3d380e8256d0",
+      "name": "Respond — Agent OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        37472,
+        37552
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://flowbot-steel.vercel.app/api/v1/orders/current?tenant_id={{ $('Code — Detect Language + Route').first().json.tenantId }}&phone={{ encodeURIComponent($('Code — Detect Language + Route').first().json.from) }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "flowbot_n8n_dev_key_8f3a1c9d2b7e4f60a1c3d5e7f9b1a3c5"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 8000
+        }
+      },
+      "id": "a1c0ffee-0001-4a10-9b20-0cur0rder0001",
+      "name": "HTTP — Get Current Order",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        37504,
+        35660
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normalise the customer's current order into a simple, safe shape for Build Context.\n// Endpoint contract (flowbot backend):\n//   GET /api/v1/orders/current?tenant_id=&phone=\n//   -> { order: { order_ref, status }, support_number? }   (order:null when none)\n// Degrades gracefully: if the endpoint is missing/errors, we output an \"unknown\"\n// state and Build Context falls back to its previous behaviour (no regression).\nlet res = {};\ntry { res = $input.first().json || {}; } catch (e) { res = {}; }\n\nconst order = res.order || (Array.isArray(res.orders) ? res.orders[0] : null) || null;\nconst statusRaw = String((order && (order.status || order.state)) || '').toLowerCase().trim();\n\n// Real OrderStatus enum (8 values) — aligned with backend lib/db/orders.ts.\n// Editable: customer may still change via chat. Locked: team-confirmed, no edits.\nconst EDITABLE = ['pending', 'awaiting_payment', 'pending_verification'];\nconst LOCKED   = ['confirmed', 'preparing', 'shipped', 'delivered'];\n\nlet orderState;                 // 'none' | 'editable' | 'locked' | 'cancelled' | 'unknown'\nif (!order)                          orderState = 'none';\nelse if (statusRaw === 'cancelled' || statusRaw === 'canceled') orderState = 'cancelled';\nelse if (LOCKED.includes(statusRaw)) orderState = 'locked';\nelse if (EDITABLE.includes(statusRaw)) orderState = 'editable';\nelse                                 orderState = 'unknown';\n\n// Support number: reuse whatever contact the backend already stores.\n// Try the order endpoint first, then chatbot_settings from get_config.\nlet supportNumber = res.support_number || res.support_contact || res.contact_number || '';\nif (!supportNumber) {\n  try {\n    const cs = $('HTTP — n8n get_config').first().json.chatbot_settings || {};\n    supportNumber = cs.support_number || cs.support_phone || cs.contact_number || cs.whatsapp_support || cs.hotline || '';\n  } catch (e) {}\n}\n\nreturn [{ json: {\n  currentOrderRef: (order && (order.order_ref || order.order_id)) || null,\n  orderStatus:     statusRaw || null,\n  orderState,\n  supportNumber:   String(supportNumber || '').trim()\n} }];"
+      },
+      "id": "a1c0ffee-0002-4a10-9b20-0normorder002",
+      "name": "Code — Normalize Current Order",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        37660,
+        35660
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "edit-cond-0001",
+              "leftValue": "={{ $json.orderState }}",
+              "rightValue": "editable",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a1c0ffee-0003-4a10-9b20-ifediting00003",
+      "name": "IF — Editing Existing Order?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        38700,
+        35060
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "https://flowbot-steel.vercel.app/api/v1/orders/current",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "x-api-key",
+              "value": "flowbot_n8n_dev_key_8f3a1c9d2b7e4f60a1c3d5e7f9b1a3c5"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"tenant_id\":        {{ JSON.stringify($('Code — Extract Reply').first().json.tenantId) }},\n  \"session_id\":       {{ JSON.stringify($('Code — Extract Reply').first().json.from) }},\n  \"phone\":            {{ JSON.stringify($('Code — Extract Reply').first().json.from) }},\n  \"order_ref\":        {{ JSON.stringify($('Code — Extract Reply').first().json.currentOrderRef) }},\n  \"channel\":          \"whatsapp\",\n  \"language\":         {{ JSON.stringify($('Code — Extract Reply').first().json.lang) }},\n  \"customer_name\":    {{ JSON.stringify($('Code — Extract Reply').first().json.orderPayload.customer_name) }},\n  \"delivery_address\": {{ JSON.stringify($('Code — Extract Reply').first().json.orderPayload.delivery_address) }},\n  \"contact_number\":   {{ JSON.stringify($('Code — Extract Reply').first().json.orderPayload.contact_number) }},\n  \"payment_method\":   {{ JSON.stringify($('Code — Extract Reply').first().json.orderPayload.payment_method) }},\n  \"currency\":         {{ JSON.stringify($('Code — Extract Reply').first().json.orderPayload.currency) }},\n  \"items\":            {{ JSON.stringify($('Code — Extract Reply').first().json.orderPayload.items) }},\n  \"subtotal\":         {{ $('Code — Extract Reply').first().json.orderPayload.subtotal }},\n  \"delivery_fee\":     {{ $('Code — Extract Reply').first().json.orderPayload.delivery_fee }},\n  \"total\":            {{ $('Code — Extract Reply').first().json.orderPayload.total }}\n}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "a1c0ffee-0004-4a10-9b20-updateorder004",
+      "name": "HTTP — Update Order",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        38900,
+        34980
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const ext = $('Code — Extract Reply').first().json;\nconst upd = $('HTTP — Update Order').first().json || {};\nconst lang = ext.lang || 'EN';\nconst supportNumber = (ext.supportNumber || '').trim();\nconst cur = (ext.orderPayload && ext.orderPayload.currency) || 'LKR';\nconst fmt = n => `${cur} ${Number(n || 0).toLocaleString()}`;\n\nconst locked = upd.error === 'order_locked';\nconst ok = upd.ok === true && upd.order;\n\n// Unexpected shape (network hiccup / 500) — the backend guarantees it never\n// touches the row on failure, so just keep the LLM's own reply rather than\n// invent a status we don't actually know.\nif (!locked && !ok) {\n  return [{ json: ext }];\n}\n\nconst SUPPORT_LINE = supportNumber\n  ? {\n      EN: `Please contact us on ${supportNumber} for any change.`,\n      SI: `වෙනසක් අවශ්‍ය නම් කරුණාකර ${supportNumber} අංකයට අප හා සම්බන්ධ වන්න.`,\n      TA: `மாற்றத்திற்கு தயவுசெய்து ${supportNumber} எண்ணில் எங்களைத் தொடர்பு கொள்ளவும்.`,\n      SL: `Mokakwath change karanna one nam ${supportNumber} number ekata call karanna.`,\n    }\n  : {\n      EN: `Please contact our support team directly for any change.`,\n      SI: `වෙනසක් අවශ්‍ය නම් කරුණාකර අපගේ සහාය කණ්ඩායම හා සම්බන්ධ වන්න.`,\n      TA: `மாற்றத்திற்கு தயவுசெய்து எங்கள் ஆதரவுக் குழுவை நேரடியாக தொடர்பு கொள்ளவும்.`,\n      SL: `Mokakwath change karanna one nam direct-ma support team ekata message karanna.`,\n    };\n\nif (locked) {\n  const ref = upd.order_ref || ext.currentOrderRef || 'your order';\n  const L = {\n    EN: `⚠️ Sorry, *${ref}* has already been confirmed by our team and can no longer be changed here. ${SUPPORT_LINE.EN}`,\n    SI: `⚠️ සමාවෙන්න, *${ref}* දැනටමත් අපගේ කණ්ඩායම විසින් තහවුරු කර ඇති නිසා මෙතැනින් වෙනස් කළ නොහැක. ${SUPPORT_LINE.SI}`,\n    TA: `⚠️ மன்னிக்கவும், *${ref}* ஏற்கனவே எங்கள் குழுவால் உறுதிப்படுத்தப்பட்டதால் இங்கு மாற்ற முடியாது. ${SUPPORT_LINE.TA}`,\n    SL: `⚠️ Sorry, *${ref}* dæntamath api team eken confirm karala, methanin change karanna bæ. ${SUPPORT_LINE.SL}`,\n  };\n  const body = L[lang] || L.EN;\n  return [{\n    json: {\n      ...ext,\n      botReply: body,\n      textReply: body,\n      dashboardContent: body,\n      isOrder: false,\n      orderLocked: true,\n    },\n  }];\n}\n\n// Success — the server-recomputed total is authoritative. The LLM wrote its\n// own \"updated summary\" text before this call using its own (occasionally\n// wrong) math, so reconcile if the server total disagrees.\nconst serverTotal = upd.order.total;\nconst llmTotal = ext.orderPayload ? Number(ext.orderPayload.total) : null;\nlet body = ext.botReply || '';\n\nif (llmTotal != null && Math.abs(llmTotal - Number(serverTotal)) > 0.5) {\n  const NOTE = {\n    EN: `\\n\\n(Confirmed total: ${fmt(serverTotal)})`,\n    SI: `\\n\\n(තහවුරු කළ මුළු මුදල: ${fmt(serverTotal)})`,\n    TA: `\\n\\n(உறுதிப்படுத்தப்பட்ட மொத்தம்: ${fmt(serverTotal)})`,\n    SL: `\\n\\n(Confirm una total eka: ${fmt(serverTotal)})`,\n  };\n  body += (NOTE[lang] || NOTE.EN);\n}\n\nreturn [{\n  json: {\n    ...ext,\n    botReply: body,\n    textReply: body,\n    dashboardContent: body,\n    currentOrderRef: upd.order.order_ref || ext.currentOrderRef,\n  },\n}];\n"
+      },
+      "id": "a1c0ffee-0005-4a10-9b20-reloadctx00005",
+      "name": "Code — Reload Reply Ctx",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        39100,
+        34980
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://flowbot-steel.vercel.app/api/v1/orders/current?tenant_id={{ $('Code — Detect Language + Route').first().json.tenantId }}&phone={{ encodeURIComponent($('Code — Detect Language + Route').first().json.from) }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "flowbot_n8n_dev_key_8f3a1c9d2b7e4f60a1c3d5e7f9b1a3c5"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 8000
+        }
+      },
+      "id": "a1c0ffee-0006-4a10-9b20-resolvebyph006",
+      "name": "HTTP — Resolve Order By Phone",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        37488,
+        34896
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = $('Code — Detect Language + Route').first().json;\nlet res = {};\ntry { res = $input.first().json || {}; } catch (e) { res = {}; }\n\nconst current = res.order || null;\n// Explicit ref in this message wins; otherwise use the order already\n// on file for this phone number so a plain \"any update on my order?\"\n// doesn't get treated like a first-time stranger.\nconst orderRef = base.orderRef || (current && current.order_ref) || '';\n\nreturn [{ json: {\n  ...base,\n  orderRef,\n  resolvedFromPhone: !base.orderRef && !!orderRef\n} }];"
+      },
+      "id": "a1c0ffee-0007-4a10-9b20-resolveref007",
+      "name": "Code — Resolve Order Ref",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        37776,
+        34896
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook — WhatsApp": {
+      "main": [
+        [
+          {
+            "node": "Code — Parse WA Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook — WhatsApp Verify": {
+      "main": [
+        [
+          {
+            "node": "Code — Handle Verification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Handle Verification": {
+      "main": [
+        [
+          {
+            "node": "Respond — Challenge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Parse WA Message": {
+      "main": [
+        [
+          {
+            "node": "IF — Skip?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Skip?": {
+      "main": [
+        [
+          {
+            "node": "Respond — Skip 200",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP — Get Tenant by Phone ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Get Tenant by Phone ID": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Get Conversation Control",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Detect Language + Route": {
+      "main": [
+        [
+          {
+            "node": "IF — Has Media?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Handoff?": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Escalate to Human",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP — GET /api/v1/kb",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "HTTP — GET /api/v1/products",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "HTTP — GET /api/v1/delivery",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "HTTP — Get Chat History",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "HTTP — n8n get_config",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "IF — Image Message?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "HTTP — Get Current Order",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Handoff Reply": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Send WA Handoff",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Send WA Handoff": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Save Handoff Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — GET /api/v1/kb": {
+      "main": [
+        [
+          {
+            "node": "Merge — Wait for APIs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — GET /api/v1/products": {
+      "main": [
+        [
+          {
+            "node": "Merge — Wait for APIs",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "HTTP — GET /api/v1/delivery": {
+      "main": [
+        [
+          {
+            "node": "Merge — Wait for APIs",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Code — Build Context": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Gemini API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Gemini API": {
+      "main": [
+        [
+          {
+            "node": "Code — Extract Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Extract Reply": {
+      "main": [
+        [
+          {
+            "node": "IF — Order Confirmed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Has Image?": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Send WA Image",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP — Send WA Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Send WA Image": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Save User Message",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "HTTP — Save Bot Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Send WA Text": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Save User Message",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "HTTP — Save Bot Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge — Wait for APIs": {
+      "main": [
+        [
+          {
+            "node": "Code — Build Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Get Chat History": {
+      "main": [
+        [
+          {
+            "node": "Merge — Wait for APIs",
+            "type": "main",
+            "index": 3
+          }
+        ]
+      ]
+    },
+    "HTTP — Save User Message": {
+      "main": [
+        [
+          {
+            "node": "Respond — 200 OK (text)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Save Bot Reply": {
+      "main": [
+        [
+          {
+            "node": "Respond — 200 OK (text)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Order Confirmed?": {
+      "main": [
+        [
+          {
+            "node": "IF — Editing Existing Order?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "IF — Has Image?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Create Order": {
+      "main": [
+        [
+          {
+            "node": "IF — Bank Transfer?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Build Order Confirmation": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Send WA Order Confirm",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Send WA Order Confirm": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Save User Message",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "HTTP — Save Order Bot Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Save Order Bot Reply": {
+      "main": [
+        [
+          {
+            "node": "Respond — 200 OK (text)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Image Message?": {
+      "main": [
+        [
+          {
+            "node": "HTTP — WA Get Media URL",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Code — Image Search Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — WA Get Media URL": {
+      "main": [
+        [
+          {
+            "node": "HTTP — WA Download Media",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — WA Download Media": {
+      "main": [
+        [
+          {
+            "node": "Code — Prep Image Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Prep Image Query": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Product Image Search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Product Image Search": {
+      "main": [
+        [
+          {
+            "node": "Code — Image Search Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — n8n get_config": {
+      "main": [
+        [
+          {
+            "node": "Merge — Wait for APIs",
+            "type": "main",
+            "index": 4
+          }
+        ]
+      ]
+    },
+    "Code — Image Search Results": {
+      "main": [
+        [
+          {
+            "node": "Merge — Wait for APIs",
+            "type": "main",
+            "index": 5
+          }
+        ]
+      ]
+    },
+    "When clicking 'Test API'": {
+      "main": [
+        [
+          {
+            "node": "HTTP — n8n ping",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — n8n ping": {
+      "main": [
+        [
+          {
+            "node": "HTTP — GET /api/v1/chatbot-settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM — Understand": {
+      "main": [
+        [
+          {
+            "node": "Code — Detect Language + Route",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Order Status?": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Resolve Order By Phone",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "IF — Handoff?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Get Order Status": {
+      "main": [
+        [
+          {
+            "node": "Code — Build Status Card",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Build Status Card": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Send WA Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Send WA Status": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Save Status Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Save Status Reply": {
+      "main": [
+        [
+          {
+            "node": "Respond — 200 OK (text)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Has Media?": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Get Awaiting-Payment Order",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "IF — Order Status?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Get Awaiting-Payment Order": {
+      "main": [
+        [
+          {
+            "node": "IF — Is Payment Proof?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Is Payment Proof?": {
+      "main": [
+        [
+          {
+            "node": "HTTP — WA Get Proof Media URL",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "IF — Order Status?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — WA Get Proof Media URL": {
+      "main": [
+        [
+          {
+            "node": "HTTP — WA Download Proof Media",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — WA Download Proof Media": {
+      "main": [
+        [
+          {
+            "node": "Code — Prep Proof Upload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Prep Proof Upload": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Upload Proof",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Upload Proof": {
+      "main": [
+        [
+          {
+            "node": "Code — Build Proof Ack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Build Proof Ack": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Send WA Proof Ack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Send WA Proof Ack": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Save Proof Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Save Proof Reply": {
+      "main": [
+        [
+          {
+            "node": "Respond — 200 OK (text)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Bank Transfer?": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Get Bank Details",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Code — Build Order Confirmation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Get Bank Details": {
+      "main": [
+        [
+          {
+            "node": "Code — Build Bank Instructions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Build Bank Instructions": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Send WA Bank Details",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Send WA Bank Details": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Save Bank Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Save Bank Reply": {
+      "main": [
+        [
+          {
+            "node": "Respond — 200 OK (text)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Check Existing Order": {
+      "main": [
+        [
+          {
+            "node": "IF — Already Has Order?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Already Has Order?": {
+      "main": [
+        [
+          {
+            "node": "Code — Build Duplicate Notice",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP — Create Order",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Build Duplicate Notice": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Send WA Duplicate Notice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Send WA Duplicate Notice": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Save Duplicate Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Save Duplicate Reply": {
+      "main": [
+        [
+          {
+            "node": "Respond — 200 OK (text)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook — Order Status": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Get Tenant",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Get Tenant": {
+      "main": [
+        [
+          {
+            "node": "Code — Build Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Build Notification": {
+      "main": [
+        [
+          {
+            "node": "IF — Sendable?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Sendable?": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Send WA Notification",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond — 200 OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Send WA Notification": {
+      "main": [
+        [
+          {
+            "node": "Respond — 200 OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Get Conversation Control": {
+      "main": [
+        [
+          {
+            "node": "IF — Human Controlled?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Human Controlled?": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Save Inbound (Paused)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "LLM — Understand",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Save Inbound (Paused)": {
+      "main": [
+        [
+          {
+            "node": "Respond — 200 OK (text)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Escalate to Human": {
+      "main": [
+        [
+          {
+            "node": "Code — Handoff Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Save Handoff Reply": {
+      "main": [
+        [
+          {
+            "node": "Respond — 200 OK (text)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook — Agent Reply": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Get Agent Tenant Creds",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Get Agent Tenant Creds": {
+      "main": [
+        [
+          {
+            "node": "Code — Build Agent Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Build Agent Message": {
+      "main": [
+        [
+          {
+            "node": "IF — Agent Sendable?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Agent Sendable?": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Send WA Agent Reply",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond — Agent OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Send WA Agent Reply": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Save Agent Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Save Agent Reply": {
+      "main": [
+        [
+          {
+            "node": "Respond — Agent OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Get Current Order": {
+      "main": [
+        [
+          {
+            "node": "Code — Normalize Current Order",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Normalize Current Order": {
+      "main": [
+        [
+          {
+            "node": "Merge — Wait for APIs",
+            "type": "main",
+            "index": 6
+          }
+        ]
+      ]
+    },
+    "IF — Editing Existing Order?": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Update Order",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP — Check Existing Order",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Update Order": {
+      "main": [
+        [
+          {
+            "node": "Code — Reload Reply Ctx",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Reload Reply Ctx": {
+      "main": [
+        [
+          {
+            "node": "IF — Has Image?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP — Resolve Order By Phone": {
+      "main": [
+        [
+          {
+            "node": "Code — Resolve Order Ref",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Resolve Order Ref": {
+      "main": [
+        [
+          {
+            "node": "HTTP — Get Order Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "3c09991a-ccd5-48b5-8a28-16fd8b56f223",
+  "meta": {
+    "instanceId": "7263593850bbed7684cd55923f523248c54c011801142265c8cf49d8ed05bd0d"
+  },
+  "id": "mFoJXMsPnwOOtiaS",
+  "tags": [
+    {
+      "updatedAt": "2026-06-14T10:49:32.859Z",
+      "createdAt": "2026-06-14T10:49:32.859Z",
+      "id": "DUy3qhRoUe90MZ9T",
+      "name": "whatsapp"
+    },
+    {
+      "updatedAt": "2026-06-14T10:49:32.840Z",
+      "createdAt": "2026-06-14T10:49:32.840Z",
+      "id": "e0SCFPDtmgYvltRL",
+      "name": "option1"
+    },
+    {
+      "updatedAt": "2026-06-01T05:06:49.244Z",
+      "createdAt": "2026-06-01T05:06:49.244Z",
+      "id": "OxtiU3HhzJGzprYm",
+      "name": "chatbot"
+    }
+  ]
+}

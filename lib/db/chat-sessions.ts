@@ -1,5 +1,5 @@
 import { createServiceClient } from '@/lib/supabase-server'
-import type { ChatSession, ChatMessage, ChatStats, Lang } from '@/types'
+import type { ChatSession, ChatMessage, ChatStats, ConversationControl, Lang } from '@/types'
 
 export interface ChatSessionFilters {
   language?: string
@@ -210,6 +210,77 @@ export async function insertChatMessage(
   return data as unknown as ChatMessage
 }
 
+// ── Conversation control (Support tab) ──────────────────────────────────────
+// chat_sessions has no dedicated "conversation" row per phone — a phone can
+// span several session_id rows over time. Control is read/written across all
+// of a phone's sessions so it stays consistent regardless of which row the
+// n8n pause-gate happens to read.
+
+/**
+ * Fail-open by design: this runs on every inbound message via the n8n
+ * pause-gate, so a lookup miss or query error must default to 'bot' rather
+ * than ever accidentally muting the bot for a phone that isn't actually
+ * human-controlled.
+ */
+export async function getControlByPhone(tenantId: string, phone: string): Promise<ConversationControl> {
+  try {
+    const supabase = await createServiceClient()
+    const { data } = await supabase
+      .from('chat_sessions')
+      .select('control')
+      .eq('tenant_id', tenantId)
+      .eq('phone', phone)
+      .order('last_message_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    return (data?.control as ConversationControl) ?? 'bot'
+  } catch {
+    return 'bot'
+  }
+}
+
+export async function setControlByPhone(
+  tenantId: string,
+  phone: string,
+  control: ConversationControl,
+  reason?: string
+): Promise<void> {
+  const supabase = await createServiceClient()
+  const { error } = await supabase
+    .from('chat_sessions')
+    .update({
+      control,
+      handoff_reason: control === 'human' ? reason ?? null : null,
+      handoff_at: control === 'human' ? new Date().toISOString() : null,
+    })
+    .eq('tenant_id', tenantId)
+    .eq('phone', phone)
+  if (error) throw error
+}
+
+/** Full cross-session thread for a phone number — what the Support ticket chat view renders. */
+export async function getMessagesByPhone(tenantId: string, phone: string): Promise<ChatMessage[]> {
+  const supabase = await createServiceClient()
+  const { data: sessions, error: sErr } = await supabase
+    .from('chat_sessions')
+    .select('session_id')
+    .eq('tenant_id', tenantId)
+    .eq('phone', phone)
+  if (sErr) throw sErr
+
+  const sessionIds = (sessions ?? []).map((s) => s.session_id as string)
+  if (sessionIds.length === 0) return []
+
+  const { data, error } = await supabase
+    .from('chat_messages')
+    .select(MESSAGE_FIELDS)
+    .eq('tenant_id', tenantId)
+    .in('session_id', sessionIds)
+    .order('created_at', { ascending: true })
+  if (error) throw error
+  return (data ?? []) as unknown as ChatMessage[]
+}
+
 export async function getSessionWithHistory(
   tenantId: string,
   sessionId: string
@@ -228,12 +299,14 @@ export async function getSessionWithHistory(
       .select('role, content, language, created_at')
       .eq('tenant_id', tenantId)
       .eq('session_id', sessionId)
-      .order('created_at', { ascending: true })
+      .order('created_at', { ascending: false })
       .limit(20),
   ])
 
   return {
     session: session as unknown as ChatSession | null,
-    history: (messages ?? []) as unknown as Pick<ChatMessage, 'role' | 'content' | 'language' | 'created_at'>[],
+    // Query fetches newest-first (to LIMIT correctly), then reverse to
+    // chronological order for the LLM's conversation history.
+    history: ((messages ?? []) as unknown as Pick<ChatMessage, 'role' | 'content' | 'language' | 'created_at'>[]).reverse(),
   }
 }

@@ -1,5 +1,69 @@
 import { createServiceClient } from '@/lib/supabase-server'
-import type { Order, OrderItem, OrderStatus } from '@/types'
+import type { Order, OrderItem, OrderSnapshot, OrderStatus } from '@/types'
+
+// Statuses the customer may still amend via chat — the team hasn't acted on
+// the order yet. Everything else (confirmed/preparing/shipped/delivered/cancelled)
+// is dashboard-owned or terminal and rejected by the /orders/current PATCH guard.
+export const EDITABLE_ORDER_STATUSES: OrderStatus[] = ['pending', 'awaiting_payment', 'pending_verification']
+
+// Excluded when picking the customer's "current" order — these are done, so a
+// newer non-terminal order (if any) is more relevant to surface to the bot.
+export const TERMINAL_ORDER_STATUSES: OrderStatus[] = ['cancelled', 'delivered']
+
+export const ALL_ORDER_STATUSES: OrderStatus[] = [
+  'pending', 'awaiting_payment', 'pending_verification', 'confirmed', 'preparing', 'shipped', 'delivered', 'cancelled',
+]
+
+export const NON_TERMINAL_ORDER_STATUSES: OrderStatus[] = ALL_ORDER_STATUSES.filter(
+  (s) => !TERMINAL_ORDER_STATUSES.includes(s)
+)
+
+// Columns needed to build an OrderSnapshot — used by /orders/current (GET/PATCH)
+// and POST /orders so n8n always gets the full ground-truth order back.
+export const ORDER_SNAPSHOT_COLUMNS =
+  'order_ref, status, currency, items, subtotal, delivery_fee, total, customer_name, delivery_address, contact_number, payment_method, created_at, updated_at, status_changed_at'
+
+interface OrderSnapshotRow {
+  order_ref: string
+  status: OrderStatus
+  currency: string
+  items: OrderItem[] | null
+  subtotal: number | string
+  delivery_fee: number | string
+  total: number | string
+  customer_name: string
+  delivery_address: string | null
+  contact_number: string | null
+  payment_method: string
+  created_at: string
+  updated_at: string
+  status_changed_at: string | null
+}
+
+/** Coerces a raw orders row into the JSON shape n8n injects verbatim into the model prompt. */
+export function toOrderSnapshot(row: OrderSnapshotRow): OrderSnapshot {
+  return {
+    order_ref: row.order_ref,
+    status: row.status,
+    currency: row.currency,
+    items: (row.items ?? []).map((item) => ({
+      ...item,
+      quantity: Number(item.quantity),
+      unit_price: Number(item.unit_price),
+      line_total: Number(item.line_total),
+    })),
+    subtotal: Number(row.subtotal),
+    delivery_fee: Number(row.delivery_fee),
+    total: Number(row.total),
+    customer_name: row.customer_name,
+    delivery_address: row.delivery_address,
+    contact_number: row.contact_number,
+    payment_method: row.payment_method,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+    status_changed_at: row.status_changed_at,
+  }
+}
 
 export interface CreateOrderInput {
   session_id?: string
@@ -36,6 +100,7 @@ export async function createOrder(tenantId: string, input: CreateOrderInput): Pr
       items: input.items,
       payment_method: input.payment_method,
       status: 'pending',
+      status_changed_at: new Date().toISOString(),
       subtotal: input.subtotal,
       delivery_fee: input.delivery_fee,
       total: input.total,
@@ -102,7 +167,7 @@ export async function updateOrderStatus(
   const supabase = await createServiceClient()
   const { data, error } = await supabase
     .from('orders')
-    .update({ status })
+    .update({ status, status_changed_at: new Date().toISOString() })
     .eq('tenant_id', tenantId)
     .eq('id', orderId)
     .select()

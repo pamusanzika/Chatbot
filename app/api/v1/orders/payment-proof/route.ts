@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { revalidatePath } from 'next/cache'
 import { createServiceClient } from '@/lib/supabase-server'
 
 function checkApiKey(req: NextRequest): boolean {
@@ -123,7 +124,7 @@ export async function POST(req: NextRequest) {
     // 5. Flip order status to pending_verification
     const { error: statusErr } = await supabase
       .from('orders')
-      .update({ status: 'pending_verification' })
+      .update({ status: 'pending_verification', status_changed_at: new Date().toISOString() })
       .eq('id', order_id)
       .eq('status', 'awaiting_payment') // guard against race
 
@@ -144,6 +145,9 @@ export async function POST(req: NextRequest) {
         customer_reference: custRef,
       },
     })
+
+    revalidatePath('/payments')
+    revalidatePath('/orders')
 
     return NextResponse.json({
       success: true,

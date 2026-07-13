@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getTenantById } from '@/lib/db/tenant'
-import { upsertChatSession, insertChatMessage } from '@/lib/db/chat-sessions'
+import { upsertChatSession, insertChatMessage, getControlByPhone } from '@/lib/db/chat-sessions'
+import { createComplaintTicket } from '@/lib/db/complaints'
 
 function checkApiKey(req: NextRequest): boolean {
   const expected = process.env.FLOWBOT_API_KEY
@@ -16,6 +17,11 @@ function checkApiKey(req: NextRequest): boolean {
  * Supported actions:
  *  - "get_config"    → returns tenant info + chatbot settings
  *  - "save_message"  → persists a chat message (same as /api/v1/chat/message)
+ *  - "create_ticket" → escalation: opens a support ticket + hands conversation
+ *                       control to a human. The workflow still sends the
+ *                       WhatsApp holding message itself. Idempotent per phone.
+ *  - "get_control"   → pause-gate check: is this phone bot- or human-controlled
+ *                       right now? Also available as GET (see below).
  *  - "ping"          → health check
  */
 export async function POST(req: NextRequest) {
@@ -96,6 +102,40 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ message }, { status: 201 })
       }
 
+      case 'create_ticket': {
+        const { tenant_id, phone, customer_name, summary, reason, language } =
+          body as Record<string, unknown>
+
+        if (!tenant_id || typeof tenant_id !== 'string')
+          return NextResponse.json({ error: 'tenant_id is required' }, { status: 400 })
+        if (!phone || typeof phone !== 'string')
+          return NextResponse.json({ error: 'phone is required' }, { status: 400 })
+        if (!summary || typeof summary !== 'string')
+          return NextResponse.json({ error: 'summary is required' }, { status: 400 })
+
+        const ticket = await createComplaintTicket(tenant_id, {
+          phone,
+          customer_name: typeof customer_name === 'string' ? customer_name : null,
+          summary,
+          reason: typeof reason === 'string' ? reason : undefined,
+          language: typeof language === 'string' ? language : undefined,
+        })
+
+        return NextResponse.json({ ticket }, { status: 201 })
+      }
+
+      case 'get_control': {
+        const { tenant_id, phone } = body as Record<string, unknown>
+
+        if (!tenant_id || typeof tenant_id !== 'string')
+          return NextResponse.json({ error: 'tenant_id is required' }, { status: 400 })
+        if (!phone || typeof phone !== 'string')
+          return NextResponse.json({ error: 'phone is required' }, { status: 400 })
+
+        const control = await getControlByPhone(tenant_id, phone)
+        return NextResponse.json({ control })
+      }
+
       default:
         return NextResponse.json({ error: `Unknown action: ${action}` }, { status: 400 })
     }
@@ -105,4 +145,28 @@ export async function POST(req: NextRequest) {
       { status: 500 },
     )
   }
+}
+
+/**
+ * GET /api/v1/n8n/webhook?action=get_control&tenant_id=...&phone=...
+ * Query-param form of the get_control action, for pause-gate nodes that
+ * prefer a GET lookup over a POST body.
+ */
+export async function GET(req: NextRequest) {
+  if (!checkApiKey(req)) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  const action = req.nextUrl.searchParams.get('action')
+  if (action !== 'get_control') {
+    return NextResponse.json({ error: `Unknown action: ${action}` }, { status: 400 })
+  }
+
+  const tenantId = req.nextUrl.searchParams.get('tenant_id')
+  const phone = req.nextUrl.searchParams.get('phone')
+  if (!tenantId) return NextResponse.json({ error: 'tenant_id is required' }, { status: 400 })
+  if (!phone) return NextResponse.json({ error: 'phone is required' }, { status: 400 })
+
+  const control = await getControlByPhone(tenantId, phone)
+  return NextResponse.json({ control })
 }

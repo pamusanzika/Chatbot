@@ -43,6 +43,31 @@ export async function toggleZone(tenantId: string, id: string, isActive: boolean
   if (error) throw error
 }
 
+/** Best-effort city extraction from a free-text delivery address ("123 Main St, Galle"). */
+export function cityFromAddress(address: string): string | null {
+  const parts = address.split(',').map((s) => s.trim()).filter(Boolean)
+  return parts.length >= 2 ? parts[parts.length - 1] : null
+}
+
+/**
+ * Resolves the delivery fee for a customer's address from the tenant's delivery
+ * zones — the caller's `delivery_fee` is never trusted, only used here as a hint
+ * when the address itself doesn't parse into a city.
+ */
+export async function resolveDeliveryFee(
+  tenantId: string,
+  address: string,
+  cityHint?: string | null
+): Promise<{ fee: number; district: string | null; estimated_days: string | null }> {
+  const city = cityHint ?? cityFromAddress(address)
+  const zone = city ? await lookupZoneByCity(tenantId, city) : null
+  return {
+    fee: zone?.fee ?? 0,
+    district: zone?.district ?? null,
+    estimated_days: zone?.estimated_days ?? null,
+  }
+}
+
 export async function lookupZoneByCity(
   tenantId: string,
   city: string

@@ -1,14 +1,15 @@
 'use client'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
   LayoutDashboard, ShoppingBag, Truck, Tag, BookOpen, Users,
-  MessageSquare, AlertCircle, BarChart2, Settings, Bot, CreditCard,
+  MessageSquare, AlertCircle, BarChart2, BarChart3, Settings, Bot, CreditCard,
 } from 'lucide-react'
 
 const ICONS: Record<string, React.ElementType> = {
   LayoutDashboard, ShoppingBag, Truck, Tag, BookOpen, Users,
-  MessageSquare, AlertCircle, BarChart2, Settings, Bot, CreditCard,
+  MessageSquare, AlertCircle, BarChart2, BarChart3, Settings, Bot, CreditCard,
 }
 
 const NAV = [
@@ -20,12 +21,28 @@ const NAV = [
   { id: 'knowledge-base', label: 'Knowledge Base', icon: 'BookOpen',        href: '/knowledge-base' },
   { id: 'customers',      label: 'Customers',      icon: 'Users',           href: '/customers' },
   { id: 'chat-logs',      label: 'Chat Logs',      icon: 'MessageSquare',   href: '/chat-logs' },
-  { id: 'complaints',     label: 'Complaints',     icon: 'AlertCircle',     href: '/complaints', badge: 3 },
+  { id: 'complaints',     label: 'Complaints',     icon: 'AlertCircle',     href: '/complaints' },
   { id: 'analytics',      label: 'Analytics',      icon: 'BarChart2',       href: '/analytics' },
+  { id: 'usage',          label: 'Usage',          icon: 'BarChart3',       href: '/usage' },
 ]
 
 export function Sidebar() {
   const pathname = usePathname()
+  const [openComplaintsCount, setOpenComplaintsCount] = useState(0)
+
+  useEffect(() => {
+    let cancelled = false
+    async function poll() {
+      try {
+        const res = await fetch('/api/complaints?status=open')
+        const data = await res.json()
+        if (!cancelled) setOpenComplaintsCount(data.complaints?.length ?? 0)
+      } catch {}
+    }
+    poll()
+    const interval = setInterval(poll, 15000)
+    return () => { cancelled = true; clearInterval(interval) }
+  }, [])
 
   return (
     <aside className="fb-sidebar">
@@ -43,11 +60,12 @@ export function Sidebar() {
         {NAV.map((item) => {
           const Icon = ICONS[item.icon]
           const active = pathname === item.href || pathname.startsWith(item.href + '/')
+          const badge = item.id === 'complaints' ? openComplaintsCount : undefined
           return (
             <Link key={item.id} href={item.href} className={`fb-navitem${active ? ' active' : ''}`}>
               <Icon size={18} />
               <span className="fb-navlabel">{item.label}</span>
-              {item.badge ? <span className="fb-nav-count">{item.badge}</span> : null}
+              {badge ? <span className="fb-nav-count">{badge}</span> : null}
             </Link>
           )
         })}

@@ -141,6 +141,7 @@ function ChatDrawer({
               <div className="fb-bubble-meta">
                 {m.language && <LangBadge code={m.language as Lang} />}
                 <span>{fmt(m.created_at)}</span>
+                {m.role === 'assistant' && !!m.tokens_used && <span>· {m.tokens_used} tokens</span>}
               </div>
             </div>
           </div>

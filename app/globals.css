@@ -1306,6 +1306,65 @@ h3 {
   opacity: 0.7;
 }
 
+/* Support ticket thread: customer (left) / bot (left, muted) / agent (right, accent) */
+.fb-bubble-row.agent {
+  justify-content: flex-end;
+}
+
+.fb-bubble.customer {
+  background: var(--surface);
+  border: 1px solid var(--border-faint);
+  border-bottom-left-radius: 4px;
+  color: var(--text);
+}
+
+.fb-bubble.bot {
+  background: var(--surface-2);
+  border: 1px dashed var(--border-faint);
+  border-bottom-left-radius: 4px;
+  color: var(--text);
+  opacity: 0.85;
+}
+
+.fb-bubble.agent {
+  background: var(--accent);
+  color: #fff;
+  border-bottom-right-radius: 4px;
+}
+
+.fb-bubble-tag {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  opacity: 0.6;
+  margin-bottom: 3px;
+}
+
+.fb-banner-paused {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: #ef444422;
+  color: #ef4444;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.fb-banner-resumed {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: #2dd4a022;
+  color: #2dd4a0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
 /* ============ STATUS TIMELINE ============ */
 .fb-timeline {
   margin-top: 12px;

@@ -9,7 +9,7 @@ export type PaymentMethod = 'COD' | 'Bank'
 export type ComplaintStatus = 'open' | 'progress' | 'resolved'
 export type UserRole = 'Owner' | 'Admin' | 'Staff'
 export type UserStatus = 'Active' | 'Invited' | 'Suspended'
-export type ChatIntent = 'Order' | 'Delivery' | 'Stock' | 'Complaint' | 'Handoff' | 'Other'
+export type ChatIntent = 'Order' | 'Delivery' | 'Stock' | 'Complaint' | 'Handoff' | 'Other' | 'agent_reply'
 export type StockReason = 'Restock' | 'Sale' | 'Damaged' | 'Return' | 'Adjustment'
 
 // ── Tenant ──────────────────────────────────────────────────
@@ -30,6 +30,9 @@ export interface ChatbotSettings {
   fallback_message: string
   handoff_triggers: string
   handoff_message: string
+  // Customer-facing contact number surfaced when the bot has to tell a
+  // customer to reach support directly (e.g. their order is already confirmed).
+  support_number?: string
 }
 
 export interface Tenant {
@@ -72,6 +75,27 @@ export interface OrderItem {
   unit_price: number
   line_total: number
   price_unverified?: boolean
+  product_id?: string | null
+}
+
+// Full ground-truth order snapshot handed to n8n so the bot never has to
+// reconstruct order state from chat memory — see GET /orders/current and the
+// echoed order on PATCH /orders/current and POST /orders.
+export interface OrderSnapshot {
+  order_ref: string
+  status: OrderStatus
+  currency: string
+  items: OrderItem[]
+  subtotal: number
+  delivery_fee: number
+  total: number
+  customer_name: string
+  delivery_address: string | null
+  contact_number: string | null
+  payment_method: string
+  created_at: string
+  updated_at: string
+  status_changed_at: string | null
 }
 
 export interface Order {
@@ -104,6 +128,7 @@ export interface Order {
   total: number
   created_at: string
   updated_at: string
+  status_changed_at: string | null
 }
 
 // ── Product ─────────────────────────────────────────────────
@@ -198,6 +223,8 @@ export interface ChatMessage {
   created_at: string
 }
 
+export type ConversationControl = 'bot' | 'human'
+
 export interface ChatSession {
   id: string
   tenant_id: string
@@ -211,6 +238,9 @@ export interface ChatSession {
   message_count: number
   last_message_at: string
   created_at: string
+  control?: ConversationControl
+  handoff_reason?: string | null
+  handoff_at?: string | null
 }
 
 export interface ChatStats {
@@ -231,14 +261,17 @@ export interface Complaint {
   id: string
   tenant_id: string
   complaint_ref: string
-  customer_id: string
+  customer_id: string | null
   customer_name: string
+  phone: string | null
+  reason: string
   summary: string
   status: ComplaintStatus
   assigned_to: string | null
   notes: ComplaintNote[]
   language: Lang
   created_at: string
+  resolved_at: string | null
 }
 
 // ── Usage ────────────────────────────────────────────────────

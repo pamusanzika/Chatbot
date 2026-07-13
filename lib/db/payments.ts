@@ -129,7 +129,7 @@ export async function decidePayment(
 
   const { error: updateErr } = await supabase
     .from('orders')
-    .update({ status: newStatus })
+    .update({ status: newStatus, status_changed_at: new Date().toISOString() })
     .eq('tenant_id', tenantId)
     .eq('id', orderId)
 
